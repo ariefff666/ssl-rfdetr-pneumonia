@@ -197,33 +197,27 @@ def main(config_path: str) -> None:
     if ckpt_cfg.get("resume_from"):
         ckpt = torch.load(ckpt_cfg["resume_from"], map_location=device, weights_only=False)
         saved_state = ckpt["model_state_dict"]
+        flat_state = {}
         
-        # Skenario 1: Jika checkpoint disimpan sebagai Nested Dictionary
-        if "student_backbone" in saved_state and isinstance(saved_state["student_backbone"], dict):
-            print("=> Terdeteksi bentuk Nested Dictionary pada checkpoint. Memuat per komponen...")
-            for comp_name in ["student_backbone", "student_head", "teacher_backbone", "teacher_head", "center"]:
-                if comp_name in saved_state:
-                    comp_state = saved_state[comp_name]
-                    # Bersihkan awalan 'module.' jika kebetulan ada di dalam file pth
-                    clean_state = {k.replace("module.", ""): v for k, v in comp_state.items()}
-                    
-                    target_comp = getattr(model, comp_name)
-                    # Jika model di Kaggle sedang dibungkus DDP, kita suntikkan ke dalam .module-nya
-                    if hasattr(target_comp, "module"):
-                        target_comp.module.load_state_dict(clean_state, strict=False)
-                    else:
-                        target_comp.load_state_dict(clean_state, strict=False)
-                        
-        # Skenario 2: Jika checkpoint berupa Flat Dictionary biasa
-        else:
-            print("=> Terdeteksi bentuk Flat Dictionary pada checkpoint.")
-            clean_state = {k.replace("module.", ""): v for k, v in saved_state.items()}
+        for k, v in saved_state.items():
+            # Jika item berupa Dictionary (seperti student_backbone, teacher_head)
+            if isinstance(v, dict):
+                for sub_k, sub_v in v.items():
+                    clean_sub_k = sub_k.replace("module.", "")
+                    # Sediakan dua versi (dengan dan tanpa 'module.') 
+                    # PyTorch (strict=False) otomatis akan memilih nama layer yang cocok
+                    flat_state[f"{k}.{clean_sub_k}"] = sub_v
+                    flat_state[f"{k}.module.{clean_sub_k}"] = sub_v
             
-            if hasattr(model, "module"):
-                model.module.load_state_dict(clean_state, strict=False)
+            # Jika item langsung berupa Tensor tunggal (seperti 'center')
             else:
-                model.load_state_dict(clean_state, strict=False)
-
+                flat_state[k] = v
+                # Penyesuaian khusus untuk DINOv2: sinkronisasi nama loss center
+                if k == "center":
+                    flat_state["criterion.center"] = v
+                    
+        print("=> Memuat state_dict yang sudah diratakan (flattened) ke dalam model...")
+        model.load_state_dict(flat_state, strict=False)
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         start_epoch = ckpt["epoch"] + 1
         if is_main_process(rank):
