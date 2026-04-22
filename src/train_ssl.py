@@ -19,8 +19,14 @@ Usage (multi-GPU via torchrun on Kaggle T4x2):
 import argparse
 import math
 import os
+import sys
 import time
 from pathlib import Path
+
+# Ensure project root is in Python path
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import torch
 import torch.distributed as dist

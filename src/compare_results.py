@@ -13,7 +13,13 @@ Usage:
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+# Ensure project root is in Python path
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend for servers

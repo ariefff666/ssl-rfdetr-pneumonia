@@ -33,6 +33,17 @@ pip install -q rfdetr albumentations wandb pycocotools scikit-learn tqdm pyyaml 
 cd /kaggle/working/ssl-rfdetr-pneumonia
 export PYTHONPATH="/kaggle/working/ssl-rfdetr-pneumonia:$PYTHONPATH"
 
+# Ensure all __init__.py files exist (git sometimes drops near-empty files)
+touch src/__init__.py
+touch src/data/__init__.py
+touch src/models/__init__.py
+touch src/utils/__init__.py
+
+# Debug: verify package structure
+echo "--- Verifying package structure ---"
+find src -name "*.py" | head -20
+echo "-----------------------------------"
+
 # ==============================================================================
 # PHASE 1: Data Preparation
 # ==============================================================================
@@ -41,7 +52,7 @@ echo "============================================================"
 echo "PHASE 1: Preparing COCO dataset from RSNA CSV"
 echo "============================================================"
 
-python -m src.data.prepare_coco --config configs/finetune_rfdetr.yaml
+python3 src/data/prepare_coco.py --config configs/finetune_rfdetr.yaml
 
 # ==============================================================================
 # PHASE 2: SSL Continual Pre-training
@@ -53,7 +64,7 @@ echo "============================================================"
 
 # Use torchrun for multi-GPU (T4x2)
 torchrun --nproc_per_node=2 \
-    -m src.train_ssl \
+    src/train_ssl.py \
     --config configs/ssl_pretrain.yaml
 
 # Identify the final backbone checkpoint
@@ -68,7 +79,7 @@ echo "============================================================"
 echo "PHASE 3A: RF-DETR Fine-tuning (WITH SSL backbone)"
 echo "============================================================"
 
-python -m src.train_rfdetr \
+python3 src/train_rfdetr.py \
     --config configs/finetune_rfdetr.yaml \
     --ssl-backbone "${SSL_BACKBONE}" \
     --run-name rfdetr-finetune
@@ -81,7 +92,7 @@ echo "============================================================"
 echo "PHASE 3B: RF-DETR Fine-tuning (BASELINE — original DINOv2)"
 echo "============================================================"
 
-python -m src.train_rfdetr \
+python3 src/train_rfdetr.py \
     --config configs/finetune_rfdetr.yaml \
     --run-name rfdetr-finetune
 
@@ -93,7 +104,7 @@ echo "============================================================"
 echo "PHASE 4: Comparing SSL vs Baseline results"
 echo "============================================================"
 
-python -m src.compare_results \
+python3 src/compare_results.py \
     --ssl-dir /kaggle/working/checkpoints/rfdetr/rfdetr-finetune-ssl \
     --baseline-dir /kaggle/working/checkpoints/rfdetr/rfdetr-finetune-baseline \
     --output-dir /kaggle/working/comparison
