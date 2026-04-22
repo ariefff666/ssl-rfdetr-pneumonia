@@ -149,10 +149,14 @@ def main(config_path: str) -> None:
     if world_size > 1:
         # Only wrap student parts in DDP (teacher is updated via EMA, not gradients)
         model.student_backbone = DDP(
-            model.student_backbone, device_ids=[local_rank]
+            model.student_backbone, 
+            device_ids=[local_rank],
+            find_unused_parameters=True
         )
         model.student_head = DDP(
-            model.student_head, device_ids=[local_rank]
+            model.student_head, 
+            device_ids=[local_rank],
+            find_unused_parameters=True
         )
 
     # -------------------------------------------------------------------------
