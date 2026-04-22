@@ -29,8 +29,9 @@ pip install -q rfdetr albumentations wandb pycocotools scikit-learn tqdm pyyaml 
 # Set W&B API key (replace with your key or set in Kaggle secrets)
 # export WANDB_API_KEY="your-wandb-api-key-here"
 
-# Navigate to project root
+# Navigate to project root and set Python path
 cd /kaggle/working/ssl-rfdetr-pneumonia
+export PYTHONPATH="/kaggle/working/ssl-rfdetr-pneumonia:$PYTHONPATH"
 
 # ==============================================================================
 # PHASE 1: Data Preparation
