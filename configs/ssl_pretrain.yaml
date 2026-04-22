@@ -8,7 +8,7 @@ data:
   # Path to the root directory containing all RSNA PNG images.
   # On Kaggle, this is typically: /kaggle/input/rsna-pneumonia-detection-challenge/stage_2_train_images_png
   image_dir: "/kaggle/input/datasets/stevezeyuzhang/rsna-pneumonia-detection-challenge/rsna-pneumonia-detection-challenge/stage_2_train_images_png"
-  image_size: 512
+  image_size: 518                # Must be multiple of 14 (DINOv2 patch_size=14). 518 = 14 × 37
   num_workers: 4
 
 # --- Model ---

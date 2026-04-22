@@ -56,11 +56,11 @@ def get_ssl_local_transform(image_size: int = 512, config: dict | None = None) -
 
     Produces small crops (covering 5-40% of the image) that force the model
     to learn fine-grained features like opacity edges and rib patterns.
-    Local crops are resized to 96x96 following DINOv2 convention.
+    Local crops are resized to 98x98 (must be multiple of 14 for DINOv2 patch_size).
     """
     cfg = config or {}
     scale = cfg.get("local_crop_scale", [0.05, 0.4])
-    local_size = 96  # DINOv2 standard local crop size
+    local_size = 98  # Must be multiple of 14 (DINOv2 patch_size). 98 = 14 × 7
 
     return A.Compose([
         A.RandomResizedCrop(
