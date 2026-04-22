@@ -33,7 +33,8 @@ pip install -q rfdetr albumentations wandb pycocotools scikit-learn tqdm pyyaml 
 cd /kaggle/working/ssl-rfdetr-pneumonia
 export PYTHONPATH="/kaggle/working/ssl-rfdetr-pneumonia:$PYTHONPATH"
 
-# Ensure all __init__.py files exist (git sometimes drops near-empty files)
+# Ensure all package directories and __init__.py files exist
+mkdir -p src/data src/models src/utils
 touch src/__init__.py
 touch src/data/__init__.py
 touch src/models/__init__.py
