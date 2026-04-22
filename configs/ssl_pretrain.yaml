@@ -48,7 +48,7 @@ augmentation:
 checkpoint:
   save_dir: "/kaggle/working/checkpoints/ssl"
   save_every_epochs: 5
-  resume_from: null               # Path to checkpoint to resume from
+  resume_from: "/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoints/checkpoint_epoch_10.pth"               # Path to checkpoint to resume from
 
 # --- Logging ---
 logging:
