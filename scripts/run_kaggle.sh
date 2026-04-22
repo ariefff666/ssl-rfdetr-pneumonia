@@ -86,6 +86,8 @@ echo "============================================================"
 echo "PHASE 3A: RF-DETR Fine-tuning (WITH SSL backbone)"
 echo "============================================================"
 
+pip install faster-coco-eval
+
 python3 src/train_rfdetr.py \
     --config configs/finetune_rfdetr.yaml \
     --ssl-backbone "${SSL_BACKBONE}" \
