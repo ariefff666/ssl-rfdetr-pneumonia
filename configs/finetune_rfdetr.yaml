@@ -8,9 +8,9 @@ data:
   # Path to COCO-formatted dataset directory (output of prepare_coco.py)
   dataset_dir: "/kaggle/working/dataset_coco"
   # Original CSV files (used only by prepare_coco.py)
-  train_labels_csv: "/kaggle/input/rsna-pneumonia-detection-challenge/stage_2_train_labels.csv"
-  class_info_csv: "/kaggle/input/rsna-pneumonia-detection-challenge/stage_2_detailed_class_info.csv"
-  image_dir: "/kaggle/input/rsna-pneumonia-detection-challenge/stage_2_train_images_png"
+  train_labels_csv: "/kaggle/input/datasets/stevezeyuzhang/rsna-pneumonia-detection-challenge/rsna-pneumonia-detection-challenge/stage_2_train_labels.csv"
+  class_info_csv: "/kaggle/input/datasets/stevezeyuzhang/rsna-pneumonia-detection-challenge/rsna-pneumonia-detection-challenge/stage_2_detailed_class_info.csv"
+  image_dir: "/kaggle/input/datasets/stevezeyuzhang/rsna-pneumonia-detection-challenge/rsna-pneumonia-detection-challenge/stage_2_train_images_png"
 
 # --- Model ---
 model:

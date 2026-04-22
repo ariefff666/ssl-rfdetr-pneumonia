@@ -94,15 +94,27 @@ os.environ["WANDB_API_KEY"] = "your-wandb-api-key"  # Get from wandb.ai/authoriz
 !cd /kaggle/working/ssl-rfdetr-pneumonia && bash scripts/run_kaggle.sh
 ```
 
-**Option B — Background (keeps running after closing browser):**
+**Option B — Background-safe (keeps running after closing browser):**
+
+> **Note:** Kaggle does NOT support shell background processes (`&`).
+> Instead, use **"Save & Run All"** from the notebook menu — Kaggle will
+> execute all cells server-side for up to 12 hours even if you close the browser.
+
+Alternatively, use Python `subprocess` for non-blocking execution within a cell:
 ```python
-!cd /kaggle/working/ssl-rfdetr-pneumonia && nohup bash scripts/run_kaggle.sh > /kaggle/working/pipeline.log 2>&1 &
-!echo "Pipeline started! PID: $(cat /proc/sys/kernel/ns_last_pid)"
+import subprocess
+proc = subprocess.Popen(
+    ["bash", "scripts/run_kaggle.sh"],
+    cwd="/kaggle/working/ssl-rfdetr-pneumonia",
+    stdout=open("/kaggle/working/pipeline.log", "w"),
+    stderr=subprocess.STDOUT,
+)
+print(f"Pipeline started! PID: {proc.pid}")
 ```
 
-Monitor progress:
+Monitor progress (in a separate cell):
 ```python
-!tail -f /kaggle/working/pipeline.log  # Live log
+!tail -100 /kaggle/working/pipeline.log
 ```
 
 ### Step 4: Run Phases Individually (if needed)
