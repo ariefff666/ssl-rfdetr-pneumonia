@@ -63,6 +63,12 @@ echo "============================================================"
 echo "PHASE 2: DINOv2 SSL Continual Pre-training"
 echo "============================================================"
 
+# Hapus sisa file cache yang korup akibat bentrokan sebelumnya
+rm -rf /root/.cache/torch/hub/
+
+# Pancing download secara aman sebelum torchrun dijalankan
+python -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
+
 # Use torchrun for multi-GPU (T4x2)
 torchrun --nproc_per_node=2 \
     src/train_ssl.py \
