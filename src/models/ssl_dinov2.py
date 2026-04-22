@@ -171,6 +171,14 @@ class SSLDINOv2(nn.Module):
         )
         embed_dim = self.student_backbone.embed_dim
 
+        # Enable gradient checkpointing for memory savings on T4 GPUs
+        if hasattr(self.student_backbone, 'set_grad_checkpointing'):
+            self.student_backbone.set_grad_checkpointing(True)
+        else:
+            # Manual gradient checkpointing for DINOv2 ViT blocks
+            for block in self.student_backbone.blocks:
+                block.use_checkpoint = True
+
         # Create projection head
         self.student_head = DINOHead(
             in_dim=embed_dim,

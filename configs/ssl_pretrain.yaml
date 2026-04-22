@@ -8,8 +8,8 @@ data:
   # Path to the root directory containing all RSNA PNG images.
   # On Kaggle, this is typically: /kaggle/input/rsna-pneumonia-detection-challenge/stage_2_train_images_png
   image_dir: "/kaggle/input/datasets/stevezeyuzhang/rsna-pneumonia-detection-challenge/rsna-pneumonia-detection-challenge/stage_2_train_images_png"
-  image_size: 518                # Must be multiple of 14 (DINOv2 patch_size=14). 518 = 14 × 37
-  num_workers: 4
+  image_size: 224                # Must be multiple of 14 (DINOv2 patch_size=14). 224 = 14 × 16 (standard DINOv2 resolution)
+  num_workers: 2
 
 # --- Model ---
 model:
@@ -21,7 +21,7 @@ model:
 # --- SSL Training ---
 training:
   epochs: 50
-  batch_size: 64                  # Per-GPU batch size; effective = batch_size * num_gpus
+  batch_size: 16                  # Per-GPU batch size (T4 16GB limit). Effective = 16 × 2 GPUs = 32
   learning_rate: 0.0003           # Base LR (will be scaled by linear warmup)
   weight_decay: 0.05
   warmup_epochs: 5
@@ -36,7 +36,7 @@ training:
 augmentation:
   global_crop_scale: [0.4, 1.0]   # Random resized crop scale range for global views
   local_crop_scale: [0.05, 0.4]   # Scale range for local (small) crops
-  num_local_crops: 6              # Number of small local crop views
+  num_local_crops: 4              # Number of small local crop views (reduced from 6 for T4 memory)
   # Medical-domain specific: we do NOT use color jittering heavily
   # because X-ray images have meaningful grayscale intensity distributions
   brightness: 0.2
