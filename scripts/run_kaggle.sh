@@ -68,6 +68,10 @@ torchrun --nproc_per_node=2 \
     src/train_ssl.py \
     --config configs/ssl_pretrain.yaml
 
+torchrun --nproc_per_node=2 src/train_ssl.py \
+  --config configs/ssl_pretrain.yaml \
+  --resume /kaggle/input/datasets/arief666/rfdetr-ssl-checkpoints/checkpoint_epoch_10.pth
+
 # Identify the final backbone checkpoint
 SSL_BACKBONE="/kaggle/working/checkpoints/ssl/backbone_epoch_50.pth"
 echo "SSL backbone saved to: ${SSL_BACKBONE}"

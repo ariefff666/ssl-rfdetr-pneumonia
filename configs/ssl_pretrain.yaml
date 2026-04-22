@@ -54,5 +54,5 @@ checkpoint:
 logging:
   use_wandb: true
   wandb_project: "ssl-rfdetr-pneumonia"
-  wandb_run_name: "ssl-continual-pretrain"
+  wandb_run_name: "ssl-continual-pretrain-01(resume-epoch-10)"
   log_every_steps: 50
