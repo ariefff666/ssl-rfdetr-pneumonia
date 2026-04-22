@@ -1,0 +1,58 @@
+# ==============================================================================
+# SSL Pre-training Configuration
+# DINOv2 Continual Pre-training on RSNA Chest X-Ray Images
+# ==============================================================================
+
+# --- Data ---
+data:
+  # Path to the root directory containing all RSNA PNG images.
+  # On Kaggle, this is typically: /kaggle/input/rsna-pneumonia-detection-challenge/stage_2_train_images
+  image_dir: "/kaggle/input/rsna-pneumonia-detection-challenge/stage_2_train_images_png"
+  image_size: 512
+  num_workers: 4
+
+# --- Model ---
+model:
+  # DINOv2 backbone variant used inside RF-DETR
+  backbone: "dinov2_vits14_reg"   # ViT-Small with registers (RF-DETR-S backbone)
+  projection_dim: 256             # Projection head output dimension
+  hidden_dim: 2048                # Projection head hidden dimension
+
+# --- SSL Training ---
+training:
+  epochs: 50
+  batch_size: 64                  # Per-GPU batch size; effective = batch_size * num_gpus
+  learning_rate: 0.0003           # Base LR (will be scaled by linear warmup)
+  weight_decay: 0.05
+  warmup_epochs: 5
+  min_lr: 0.000001
+  momentum_teacher: 0.996         # EMA momentum for teacher network
+  gradient_clip_norm: 3.0         # Max gradient norm for clipping
+
+  # Optimizer
+  optimizer: "adamw"
+
+# --- Augmentation (SSL-specific) ---
+augmentation:
+  global_crop_scale: [0.4, 1.0]   # Random resized crop scale range for global views
+  local_crop_scale: [0.05, 0.4]   # Scale range for local (small) crops
+  num_local_crops: 6              # Number of small local crop views
+  # Medical-domain specific: we do NOT use color jittering heavily
+  # because X-ray images have meaningful grayscale intensity distributions
+  brightness: 0.2
+  contrast: 0.2
+  gaussian_blur_prob: 0.5
+  solarization_prob: 0.1
+
+# --- Checkpointing ---
+checkpoint:
+  save_dir: "/kaggle/working/checkpoints/ssl"
+  save_every_epochs: 5
+  resume_from: null               # Path to checkpoint to resume from
+
+# --- Logging ---
+logging:
+  use_wandb: true
+  wandb_project: "ssl-rfdetr-pneumonia"
+  wandb_run_name: "ssl-continual-pretrain"
+  log_every_steps: 50

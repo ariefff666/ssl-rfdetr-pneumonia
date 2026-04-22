@@ -1,0 +1,48 @@
+# ==============================================================================
+# RF-DETR Fine-tuning Configuration
+# Pneumonia Detection on RSNA Dataset
+# ==============================================================================
+
+# --- Data ---
+data:
+  # Path to COCO-formatted dataset directory (output of prepare_coco.py)
+  dataset_dir: "/kaggle/working/dataset_coco"
+  # Original CSV files (used only by prepare_coco.py)
+  train_labels_csv: "/kaggle/input/rsna-pneumonia-detection-challenge/stage_2_train_labels.csv"
+  class_info_csv: "/kaggle/input/rsna-pneumonia-detection-challenge/stage_2_detailed_class_info.csv"
+  image_dir: "/kaggle/input/rsna-pneumonia-detection-challenge/stage_2_train_images_png"
+
+# --- Model ---
+model:
+  # RF-DETR variant: RFDETRSmall uses 512x512 resolution with DINOv2 ViT-S backbone
+  variant: "RFDETRSmall"
+  num_classes: 1                  # Single class: "Lung Opacity" (pneumonia)
+
+# --- Training ---
+training:
+  epochs: 50
+  batch_size: 4                   # Per-GPU; with grad_accum=4 → effective batch = 16
+  grad_accum_steps: 4
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+
+  # Early stopping
+  early_stopping: true
+  early_stopping_patience: 10
+  early_stopping_min_delta: 0.001
+
+# --- SSL Backbone ---
+ssl:
+  # Set to path of SSL-pretrained backbone to use Domain-Adapted weights
+  # Set to null for baseline (original DINOv2 weights)
+  pretrained_backbone: null       # e.g., "/kaggle/working/checkpoints/ssl/backbone_epoch_50.pth"
+
+# --- Checkpointing ---
+checkpoint:
+  output_dir: "/kaggle/working/checkpoints/rfdetr"
+
+# --- Logging ---
+logging:
+  use_wandb: true
+  wandb_project: "ssl-rfdetr-pneumonia"
+  wandb_run_name: "rfdetr-finetune"
