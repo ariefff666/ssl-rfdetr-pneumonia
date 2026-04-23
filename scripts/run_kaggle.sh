@@ -63,20 +63,32 @@ echo "============================================================"
 echo "PHASE 2: DINOv2 SSL Continual Pre-training"
 echo "============================================================"
 
-# Hapus sisa file cache yang korup akibat bentrokan sebelumnya
-rm -rf /root/.cache/torch/hub/
+BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbone/backbone_epoch_50.pth"
 
-# Pancing download secara aman sebelum torchrun dijalankan
-python -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
-
-# Use torchrun for multi-GPU (T4x2)
-torchrun --nproc_per_node=2 \
-    src/train_ssl.py \
-    --config configs/ssl_pretrain.yaml
-
-# Identify the final backbone checkpoint
-SSL_BACKBONE="/kaggle/working/checkpoints/ssl/backbone_epoch_50.pth"
-echo "SSL backbone saved to: ${SSL_BACKBONE}"
+# Mengecek apakah file backbone sudah tersedia di Kaggle Input
+if [ -f "$BACKBONE_INPUT_PATH" ]; then
+    echo "=> Backbone sudah ditemukan di: $BACKBONE_INPUT_PATH"
+    echo "=> Melewati Phase 2 dan langsung menuju Phase 3..."
+    
+    # Simpan alamat backbone untuk dipakai di Phase 3
+    FINAL_BACKBONE="$BACKBONE_INPUT_PATH"
+else
+    echo "=> Backbone tidak ditemukan. Memulai Phase 2 dari awal/resume..."
+    
+    # Fix DINOv2 download conflict
+    rm -rf /root/.cache/torch/hub/  
+    python -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
+    
+    # Jalankan training SSL
+    torchrun --nproc_per_node=2 src/train_ssl.py \
+        --config configs/ssl_pretrain.yaml \
+        --resume /kaggle/input/rfdetr-checkpoints/checkpoint_epoch_10.pth
+        
+    if [ $? -ne 0 ]; then echo "Error di Phase 2! Menghentikan pipeline."; exit 1; fi
+    
+    # Jika run Phase 2 sukses, ini adalah lokasi output defaultnya
+    FINAL_BACKBONE="/kaggle/working/ssl-rfdetr-pneumonia/checkpoints/ssl/backbone_epoch_50.pth"
+fi
 
 # ==============================================================================
 # PHASE 3A: RF-DETR Fine-tuning WITH SSL backbone
@@ -90,7 +102,7 @@ pip install faster-coco-eval
 
 python3 src/train_rfdetr.py \
     --config configs/finetune_rfdetr.yaml \
-    --ssl-backbone "${SSL_BACKBONE}" \
+    --ssl-backbone "${FINAL_BACKBONE}" \
     --run-name rfdetr-finetune
 
 # ==============================================================================
