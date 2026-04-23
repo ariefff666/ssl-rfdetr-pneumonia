@@ -104,10 +104,24 @@ echo "============================================================"
 
 pip install faster-coco-eval
 
+# Check for resume checkpoint (if previous SSL run was interrupted)
+SSL_RESUME=""
+SSL_CKPT_DIR="/kaggle/working/checkpoints/rfdetr/rfdetr-finetune-ssl"
+SSL_RESUME_INPUT="/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/last.ckpt"
+
+if [ -f "${SSL_RESUME_INPUT}" ]; then
+    SSL_RESUME="--resume ${SSL_RESUME_INPUT}"
+    echo "Resuming from uploaded checkpoint: ${SSL_RESUME_INPUT}"
+elif [ -f "${SSL_CKPT_DIR}/last.ckpt" ]; then
+    SSL_RESUME="--resume ${SSL_CKPT_DIR}/last.ckpt"
+    echo "Resuming from local checkpoint: ${SSL_CKPT_DIR}/last.ckpt"
+fi
+
 python3 src/train_rfdetr.py \
     --config configs/finetune_rfdetr.yaml \
     --ssl-backbone "${FINAL_BACKBONE}" \
-    --run-name rfdetr-finetune
+    --run-name rfdetr-finetune \
+    ${SSL_RESUME}
 
 # ==============================================================================
 # PHASE 3B: RF-DETR Fine-tuning WITHOUT SSL (Baseline)

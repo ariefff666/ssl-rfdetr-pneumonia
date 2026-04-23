@@ -260,7 +260,8 @@ def inject_ssl_backbone(model, ssl_backbone_path: str) -> None:
     print(f"[SSL]   Transfer rate: {pct:.1f}%")
 
 
-def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) -> None:
+def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
+         resume_from: str | None = None) -> None:
     """Main RF-DETR fine-tuning pipeline."""
     cfg = load_config(config_path)
 
@@ -391,8 +392,8 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
     print(f"  W&B run: {final_run_name}")
     if pretrain_weights_path:
         print(f"  Pretrain weights: {pretrain_weights_path} (SSL-injected)")
-    # Resolve resume path (takes priority over pretrain_weights)
-    resume_path = train_cfg.get("resume_from")
+    # Resolve resume path: CLI arg > config
+    resume_path = resume_from or train_cfg.get("resume_from")
     if resume_path:
         print(f"  Resume from: {resume_path}")
 
@@ -479,5 +480,12 @@ if __name__ == "__main__":
         default=None,
         help="Custom W&B run name (default: from config + mode suffix)",
     )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to checkpoint to resume training from (.ckpt or .pth)."
+             " Overrides resume_from in config.",
+    )
     args = parser.parse_args()
-    main(args.config, args.ssl_backbone, args.run_name)
+    main(args.config, args.ssl_backbone, args.run_name, args.resume)
