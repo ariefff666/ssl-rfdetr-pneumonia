@@ -309,16 +309,52 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
     if is_ssl:
         inject_ssl_backbone(model, ssl_backbone_path)
 
-        # Save modified model as a full checkpoint for .train() to load
+        # Save modified model as a full checkpoint for .train() to load.
+        # RF-DETR's internal hierarchy is non-standard, so we need to
+        # discover where the actual nn.Module with state_dict() lives.
         ckpt_cfg = cfg["checkpoint"]
         output_dir_base = Path(ckpt_cfg["output_dir"])
         output_dir_base.mkdir(parents=True, exist_ok=True)
 
-        pretrain_weights_path = str(output_dir_base / "rfdetr_with_ssl_backbone.pth")
-        # RFDETRSmall is a high-level wrapper, not nn.Module.
-        # The internal LightningModule is at model.model — same format as rf-detr-small.pth
-        torch.save(model.model.state_dict(), pretrain_weights_path)
-        print(f"[SSL] Saved SSL-injected model to: {pretrain_weights_path}")
+        # Discover the internal nn.Module
+        internal_module = None
+        search_paths = [
+            "model.model.model",  # RFDETRSmall → ModelContext → LWDETR
+            "model.model",        # RFDETRSmall → LWDETR
+            "model",              # Fallback
+        ]
+
+        # Debug: print object types at each level
+        print("\n[SSL] Discovering RF-DETR internal structure:")
+        obj = model
+        depth = 0
+        while hasattr(obj, 'model') and depth < 5:
+            has_sd = callable(getattr(obj, 'state_dict', None))
+            print(f"[SSL]   {'model.' * depth}model → {type(obj).__name__} (state_dict={has_sd})")
+            obj = obj.model
+            depth += 1
+        has_sd = callable(getattr(obj, 'state_dict', None))
+        print(f"[SSL]   {'model.' * depth} → {type(obj).__name__} (state_dict={has_sd})")
+
+        for attr_path in search_paths:
+            obj = model
+            try:
+                for attr in attr_path.split("."):
+                    obj = getattr(obj, attr)
+                if callable(getattr(obj, 'state_dict', None)):
+                    internal_module = obj
+                    print(f"[SSL] Found saveable module at: {attr_path} ({type(obj).__name__})")
+                    break
+            except AttributeError:
+                continue
+
+        if internal_module is not None:
+            pretrain_weights_path = str(output_dir_base / "rfdetr_with_ssl_backbone.pth")
+            torch.save(internal_module.state_dict(), pretrain_weights_path)
+            print(f"[SSL] Saved SSL-injected model to: {pretrain_weights_path}")
+        else:
+            print("[SSL] WARNING: Could not find internal module with state_dict().")
+            print("[SSL] Proceeding with direct backbone injection (may be overwritten by .train()).")
 
     # -------------------------------------------------------------------------
     # Training
