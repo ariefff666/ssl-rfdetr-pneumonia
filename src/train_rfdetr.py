@@ -276,13 +276,21 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
     # Prepare dataset (COCO format)
     # -------------------------------------------------------------------------
     dataset_dir = cfg["data"]["dataset_dir"]
+    data_fraction = cfg["data"].get("data_fraction", 1.0)
+
+    # Use separate dataset dir for fractional datasets to avoid overwriting
+    if data_fraction < 1.0:
+        frac_pct = int(data_fraction * 100)
+        dataset_dir = f"{dataset_dir}_frac{frac_pct}"
+        cfg["data"]["dataset_dir"] = dataset_dir  # Update config for prepare_coco
 
     # Check if COCO dataset exists; if not, run preparation
     coco_train_ann = Path(dataset_dir) / "train" / "_annotations.coco.json"
     if not coco_train_ann.exists():
-        print("\nCOCO dataset not found. Running data preparation...")
+        print(f"\nCOCO dataset not found. Running data preparation (fraction={data_fraction})...")
         from src.data.prepare_coco import main as prepare_main
-        prepare_main(config_path)
+        prepare_main(config_path, data_fraction_override=data_fraction,
+                     output_dir_override=dataset_dir)
     else:
         print(f"\nCOCO dataset found at: {dataset_dir}")
 
@@ -383,6 +391,10 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
     print(f"  W&B run: {final_run_name}")
     if pretrain_weights_path:
         print(f"  Pretrain weights: {pretrain_weights_path} (SSL-injected)")
+    # Resolve resume path (takes priority over pretrain_weights)
+    resume_path = train_cfg.get("resume_from")
+    if resume_path:
+        print(f"  Resume from: {resume_path}")
 
     # Build training kwargs for RF-DETR's .train() method
     train_kwargs = {
@@ -394,8 +406,11 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
         "devices": train_cfg.get("devices", 1),
     }
 
-    # Pass SSL-injected model as pretrain_weights so .train() loads OUR weights
-    if pretrain_weights_path:
+    # Resume takes priority: loads model + optimizer + scheduler + epoch
+    # pretrain_weights only loads model weights (for fresh start with SSL backbone)
+    if resume_path:
+        train_kwargs["resume"] = resume_path
+    elif pretrain_weights_path:
         train_kwargs["pretrain_weights"] = pretrain_weights_path
 
     # Optional LR

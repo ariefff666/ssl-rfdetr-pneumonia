@@ -142,14 +142,19 @@ def build_coco_annotation(
     )
 
 
-def main(config_path: str) -> None:
+def main(config_path: str, data_fraction_override: float | None = None,
+         output_dir_override: str | None = None) -> None:
     """Main entry point for COCO dataset preparation."""
     cfg = load_config(config_path)
 
     train_labels_csv = Path(cfg["data"]["train_labels_csv"])
     class_info_csv = Path(cfg["data"]["class_info_csv"])
     image_dir = Path(cfg["data"]["image_dir"])
-    output_dir = Path(cfg["data"]["dataset_dir"])
+    output_dir = Path(output_dir_override or cfg["data"]["dataset_dir"])
+
+    # Apply data_fraction override if provided
+    if data_fraction_override is not None:
+        cfg["data"]["data_fraction"] = data_fraction_override
 
     print(f"Reading CSV files...")
     labels_df = pd.read_csv(train_labels_csv)
@@ -187,6 +192,35 @@ def main(config_path: str) -> None:
     )
 
     print(f"\nSplit: train={len(train_ids)}, valid={len(valid_ids)}, test={len(test_ids)}")
+
+    # --- Data Fraction: subsample training set for data efficiency experiments ---
+    data_fraction = cfg["data"].get("data_fraction", 1.0)
+    if data_fraction < 1.0:
+        import numpy as np
+        rng = np.random.RandomState(42)  # Fixed seed for reproducibility
+
+        n_original = len(train_ids)
+        n_subset = max(1, int(n_original * data_fraction))
+
+        # Stratified subsample: maintain positive/negative ratio
+        train_pos = [pid for pid in train_ids if pid in positive_patients]
+        train_neg = [pid for pid in train_ids if pid not in positive_patients]
+
+        n_pos = max(1, int(len(train_pos) * data_fraction))
+        n_neg = max(1, int(len(train_neg) * data_fraction))
+
+        sampled_pos = rng.choice(train_pos, size=n_pos, replace=False).tolist()
+        sampled_neg = rng.choice(train_neg, size=n_neg, replace=False).tolist()
+
+        train_ids = sampled_pos + sampled_neg
+        rng.shuffle(train_ids)
+
+        print(f"\n[Data Fraction] Using {data_fraction*100:.0f}% of training data:")
+        print(f"  Original: {n_original} → Subset: {len(train_ids)}")
+        print(f"  Positive: {n_pos}, Negative: {n_neg}")
+        print(f"  Valid/Test remain unchanged for fair comparison.")
+    else:
+        print(f"\n[Data Fraction] Using 100% of training data ({len(train_ids)} images)")
 
     # Build records
     train_records = [{"patientId": pid} for pid in train_ids]

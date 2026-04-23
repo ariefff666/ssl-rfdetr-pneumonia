@@ -11,6 +11,7 @@ data:
   train_labels_csv: "/kaggle/input/datasets/stevezeyuzhang/rsna-pneumonia-detection-challenge/rsna-pneumonia-detection-challenge/stage_2_train_labels.csv"
   class_info_csv: "/kaggle/input/datasets/stevezeyuzhang/rsna-pneumonia-detection-challenge/rsna-pneumonia-detection-challenge/stage_2_detailed_class_info.csv"
   image_dir: "/kaggle/input/datasets/stevezeyuzhang/rsna-pneumonia-detection-challenge/rsna-pneumonia-detection-challenge/stage_2_train_images_png"
+  data_fraction: 1.0              # Fraction of labeled training data to use (0.1, 0.25, 0.5, 1.0)
 
 # --- Model ---
 model:
@@ -26,6 +27,7 @@ training:
   devices: 1                      # Single GPU (DDP causes NCCL deadlock on Kaggle T4x2)
   learning_rate: 0.0001
   weight_decay: 0.0001
+  resume_from: null                # Path to checkpoint.pth to resume training from
 
   # Early stopping
   early_stopping: true
