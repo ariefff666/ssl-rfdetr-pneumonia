@@ -24,7 +24,7 @@ model:
   #   2. This ensures patch_size=16 and identical key naming
   # For the current run (backbone_source=torchhub), key mapping handles
   # the patch_size=14→16 conversion during injection.
-  backbone_source: "torchhub"     # "torchhub" (default, patch14) or "rfdetr" (recommended, patch16)
+  backbone_source: "rfdetr"     # "torchhub" (default, patch14) or "rfdetr" (recommended, patch16)
 
 # --- SSL Training ---
 training:

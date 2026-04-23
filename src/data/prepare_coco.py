@@ -206,34 +206,53 @@ def main(config_path: str, data_fraction_override: float | None = None,
 
     print(f"\nSplit: train={len(train_ids)}, valid={len(valid_ids)}, test={len(test_ids)}")
 
-    # --- Data Fraction: subsample training set for data efficiency experiments ---
+    # --- PENGATURAN DATA 90/10 BASELINE & DATA FRACTION ---
     data_fraction = cfg["data"].get("data_fraction", 1.0)
+    
+    import numpy as np
+    rng = np.random.RandomState(42)  # Seed tetap agar subset data fraction konsisten
+
+    # 1. Pisahkan ID pasien training positif dan negatif
+    train_pos = [pid for pid in train_ids if pid in positive_patients]
+    train_neg = [pid for pid in train_ids if pid not in positive_patients]
+
+    # 2. Buat Baseline 100% dengan Rasio 90% Positif / 10% Negatif
+    # Positif diambil semua (100% dari data beranotasi)
+    n_pos_base = len(train_pos)
+    # Negatif diambil sebanyak 1/9 dari jumlah positif
+    n_neg_base = int(n_pos_base / 9.0) 
+    # Pastikan tidak melebihi stok data negatif yang ada
+    n_neg_base = min(n_neg_base, len(train_neg))
+
+    sampled_neg_base = rng.choice(train_neg, size=n_neg_base, replace=False).tolist()
+
+    base_train_pos = train_pos
+    base_train_neg = sampled_neg_base
+
+    print(f"\n[Data Balance] Membentuk Baseline Training 90/10:")
+    print(f"  Positif (90%): {len(base_train_pos)} gambar")
+    print(f"  Negatif (10%): {len(base_train_neg)} gambar")
+    print(f"  Total Baseline (100%): {len(base_train_pos) + len(base_train_neg)} gambar")
+
+    # 3. Terapkan Data Fraction berdasarkan Baseline 90/10
     if data_fraction < 1.0:
-        import numpy as np
-        rng = np.random.RandomState(42)  # Fixed seed for reproducibility
+        n_pos_frac = max(1, int(len(base_train_pos) * data_fraction))
+        n_neg_frac = max(1, int(len(base_train_neg) * data_fraction))
 
-        n_original = len(train_ids)
-        n_subset = max(1, int(n_original * data_fraction))
+        final_pos = rng.choice(base_train_pos, size=n_pos_frac, replace=False).tolist()
+        final_neg = rng.choice(base_train_neg, size=n_neg_frac, replace=False).tolist()
 
-        # Stratified subsample: maintain positive/negative ratio
-        train_pos = [pid for pid in train_ids if pid in positive_patients]
-        train_neg = [pid for pid in train_ids if pid not in positive_patients]
-
-        n_pos = max(1, int(len(train_pos) * data_fraction))
-        n_neg = max(1, int(len(train_neg) * data_fraction))
-
-        sampled_pos = rng.choice(train_pos, size=n_pos, replace=False).tolist()
-        sampled_neg = rng.choice(train_neg, size=n_neg, replace=False).tolist()
-
-        train_ids = sampled_pos + sampled_neg
+        train_ids = final_pos + final_neg
         rng.shuffle(train_ids)
 
-        print(f"\n[Data Fraction] Using {data_fraction*100:.0f}% of training data:")
-        print(f"  Original: {n_original} → Subset: {len(train_ids)}")
-        print(f"  Positive: {n_pos}, Negative: {n_neg}")
-        print(f"  Valid/Test remain unchanged for fair comparison.")
+        print(f"\n[Data Fraction] Menggunakan {data_fraction*100:.0f}% dari Baseline 90/10:")
+        print(f"  Positif: {len(final_pos)}, Negatif: {len(final_neg)}")
+        print(f"  Total Training Saat Ini: {len(train_ids)} gambar")
+        print(f"  (Valid/Test tidak diubah agar komparasi adil)")
     else:
-        print(f"\n[Data Fraction] Using 100% of training data ({len(train_ids)} images)")
+        train_ids = base_train_pos + base_train_neg
+        rng.shuffle(train_ids)
+        print(f"\n[Data Fraction] Menggunakan 100% penuh dari Baseline 90/10")
 
     # Build records
     train_records = [{"patientId": pid} for pid in train_ids]

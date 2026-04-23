@@ -63,6 +63,10 @@ echo "============================================================"
 echo "PHASE 2: DINOv2 SSL Continual Pre-training"
 echo "============================================================"
 
+# Hapus cache lama agar tidak konflik
+rm -rf /root/.cache/torch/hub/
+python3 -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
+
 BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbone/backbone_epoch_50.pth"
 
 if [ -f "$BACKBONE_INPUT_PATH" ]; then
@@ -71,8 +75,7 @@ if [ -f "$BACKBONE_INPUT_PATH" ]; then
     FINAL_BACKBONE="$BACKBONE_INPUT_PATH"
 else
     echo "=> Backbone tidak ditemukan. Memulai Phase 2 dari awal/resume..."
-    rm -rf /root/.cache/torch/hub/
-    python3 -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
+    
     torchrun --nproc_per_node=2 src/train_ssl.py --config configs/ssl_pretrain.yaml
     if [ $? -ne 0 ]; then echo "Error di Phase 2!"; exit 1; fi
     FINAL_BACKBONE="/kaggle/working/ssl-rfdetr-pneumonia/checkpoints/ssl/backbone_epoch_50.pth"

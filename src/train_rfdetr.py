@@ -190,6 +190,35 @@ def inject_ssl_backbone(model, ssl_backbone_path: str) -> None:
         return
 
     rfdetr_state = backbone.state_dict()
+    new_state = dict(rfdetr_state)
+
+    # DETEKSI: Apakah ini Patch 16 (RF-DETR) atau Patch 14 (Facebook)?
+    is_patch16 = any("encoder.encoder" in k for k in ssl_state_dict.keys()) or any("patch_embeddings" in k for k in ssl_state_dict.keys())
+
+    if is_patch16:
+        print("[SSL] Format Terdeteksi: RF-DETR/HuggingFace Style (Patch 16)")
+        print("[SSL] Melakukan injeksi 1:1 langsung karena arsitektur identik...")
+        loaded = 0
+        
+        # Mapping langsung karena keys-nya pada dasarnya sama
+        for rf_key in rfdetr_state.keys():
+            candidates = [rf_key, rf_key.replace("0.", "", 1), f"0.{rf_key}"]
+            for cand in candidates:
+                if cand in ssl_state_dict:
+                    if rfdetr_state[rf_key].shape == ssl_state_dict[cand].shape:
+                        new_state[rf_key] = ssl_state_dict[cand]
+                        loaded += 1
+                    break
+                    
+        backbone.load_state_dict(new_state)
+        total = len(rfdetr_state)
+        print(f"\n[SSL] === Injection Summary (Patch 16) ===")
+        print(f"[SSL]   Loaded:       {loaded}/{total} parameters")
+        print(f"[SSL]   Transfer rate: {(loaded/total*100):.1f}%\n")
+        return
+
+    print("[SSL] Format Terdeteksi: Facebook torch.hub Style (Patch 14)")
+    print("[SSL] Mengeksekusi pemecahan QKV dan penyesuaian SwiGLU...")
 
     # --- Build reverse map: normalized_key → rfdetr_original_key ---
     rfdetr_norm_map = {}  # normalized DINOv2-style key → original RF-DETR key
@@ -207,11 +236,9 @@ def inject_ssl_backbone(model, ssl_backbone_path: str) -> None:
     print(f"[SSL] SSL keys (sample):     {ssl_keys[:3]}")
 
     # --- Transfer weights ---
-    new_state = dict(rfdetr_state)  # Start from RF-DETR's pre-trained weights
     loaded, skipped_incompat, skipped_shape, skipped_nomap = 0, 0, 0, 0
 
     for ssl_key, ssl_val in ssl_state_dict.items():
-
         # Skip inherently incompatible layers (different patch size / resolution)
         if ssl_key in ("pos_embed", "register_tokens") or "patch_embed" in ssl_key:
             skipped_incompat += 1
@@ -219,8 +246,8 @@ def inject_ssl_backbone(model, ssl_backbone_path: str) -> None:
 
         # ----- Fused QKV → separate Q, K, V -----
         if ".attn.qkv." in ssl_key:
-            suffix = ssl_key.rsplit(".", 1)[-1]  # "weight" or "bias"
-            block_prefix = ssl_key.split(".attn.qkv.")[0]  # "blocks.N"
+            suffix = ssl_key.rsplit(".", 1)[-1]
+            block_prefix = ssl_key.split(".attn.qkv.")[0]
 
             q_norm = f"{block_prefix}.attn.q.{suffix}"
             k_norm = f"{block_prefix}.attn.k.{suffix}"
@@ -447,7 +474,10 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
         "batch_size": train_cfg["batch_size"],
         "grad_accum_steps": train_cfg["grad_accum_steps"],
         "output_dir": str(output_dir),
-        "device": local_rank, 
+        "device": local_rank,
+        "num_workers": 2,       
+        "pin_memory": True,
+        "check_val_every_n_epoch": 5     
     }
 
     # Resume takes priority: loads model + optimizer + scheduler + epoch
