@@ -295,9 +295,28 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
     print(f"\nInitializing {model_cfg['variant']}...")
     model = ModelClass()
 
-    # Inject SSL backbone if provided
+    # -------------------------------------------------------------------------
+    # Inject SSL backbone and prepare pretrain_weights
+    # -------------------------------------------------------------------------
+    # IMPORTANT: RF-DETR's .train() re-loads rf-detr-small.pth internally,
+    # which overwrites any backbone weights we inject directly. To persist
+    # our SSL backbone, we must:
+    #   1. Inject SSL weights into the model
+    #   2. Save the full modified model to a temp checkpoint
+    #   3. Pass it to .train(pretrain_weights=...) so RF-DETR uses OUR weights
+    pretrain_weights_path = None
+
     if is_ssl:
         inject_ssl_backbone(model, ssl_backbone_path)
+
+        # Save modified model as a full checkpoint for .train() to load
+        ckpt_cfg = cfg["checkpoint"]
+        output_dir_base = Path(ckpt_cfg["output_dir"])
+        output_dir_base.mkdir(parents=True, exist_ok=True)
+
+        pretrain_weights_path = str(output_dir_base / "rfdetr_with_ssl_backbone.pth")
+        torch.save(model.state_dict(), pretrain_weights_path)
+        print(f"[SSL] Saved SSL-injected model to: {pretrain_weights_path}")
 
     # -------------------------------------------------------------------------
     # Training
@@ -324,6 +343,8 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
     print(f"  Effective batch: {train_cfg['batch_size'] * train_cfg['grad_accum_steps'] * train_cfg.get('devices', 1)}")
     print(f"  Output: {output_dir}")
     print(f"  W&B run: {final_run_name}")
+    if pretrain_weights_path:
+        print(f"  Pretrain weights: {pretrain_weights_path} (SSL-injected)")
 
     # Build training kwargs for RF-DETR's .train() method
     train_kwargs = {
@@ -334,6 +355,10 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
         "output_dir": str(output_dir),
         "devices": train_cfg.get("devices", 1),
     }
+
+    # Pass SSL-injected model as pretrain_weights so .train() loads OUR weights
+    if pretrain_weights_path:
+        train_kwargs["pretrain_weights"] = pretrain_weights_path
 
     # Optional LR
     if "learning_rate" in train_cfg:
