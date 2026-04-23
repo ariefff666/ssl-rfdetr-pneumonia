@@ -62,7 +62,7 @@ def get_ssl_local_transform(image_size: int = 512, config: dict | None = None) -
     cfg = config or {}
     scale = cfg.get("local_crop_scale", [0.05, 0.4])
     # Auto-size: 98 for patch14 (default), 96 for patch16. Override via config.
-    local_size = cfg.get("local_crop_size", 98)
+    local_size = cfg.get("local_crop_size", 96)
 
     return A.Compose([
         A.RandomResizedCrop(

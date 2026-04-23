@@ -46,6 +46,7 @@ augmentation:
   local_crop_scale: [0.05, 0.4]   # Scale range for local (small) crops
   num_local_crops: 4              # Number of small local crop views (reduced from 6 for T4 memory)
   # Local crop size: 98 for patch_size=14, 96 for patch_size=16 (auto-detected)
+  local_crop_size: 96
   # Medical-domain specific: we do NOT use color jittering heavily
   # because X-ray images have meaningful grayscale intensity distributions
   brightness: 0.2
