@@ -432,6 +432,27 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
         if "early_stopping_min_delta" in train_cfg:
             train_kwargs["early_stopping_min_delta"] = train_cfg["early_stopping_min_delta"]
 
+    # -------------------------------------------------------------------------
+    # Monkey-patch Lightning Trainer for DDP stability
+    # -------------------------------------------------------------------------
+    # RF-DETR's .train() creates a Lightning Trainer internally.
+    # With devices > 1, DDP deadlocks because RF-DETR has parameters not used
+    # in every forward pass. "find_unused_parameters=True" fixes this.
+    # We must patch the Trainer since RF-DETR doesn't expose strategy parameter.
+    if train_kwargs.get("devices", 1) > 1:
+        import pytorch_lightning as pl
+        _original_trainer_init = pl.Trainer.__init__
+
+        def _patched_trainer_init(self, *args, **kwargs):
+            # Force ddp_find_unused_parameters_true strategy
+            if kwargs.get("devices", 1) > 1 or kwargs.get("num_nodes", 1) > 1:
+                kwargs["strategy"] = "ddp_find_unused_parameters_true"
+                print(f"  [DDP FIX] Patched strategy → ddp_find_unused_parameters_true")
+            _original_trainer_init(self, *args, **kwargs)
+
+        pl.Trainer.__init__ = _patched_trainer_init
+        print("  [DDP FIX] Lightning Trainer patched for multi-GPU stability")
+
     start_time = time.time()
     model.train(**train_kwargs)
     total_time = time.time() - start_time

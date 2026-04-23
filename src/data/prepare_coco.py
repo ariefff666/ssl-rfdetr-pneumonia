@@ -240,13 +240,11 @@ def main(config_path: str, data_fraction_override: float | None = None,
     valid_records = [{"patientId": pid} for pid in valid_ids]
     test_records = [{"patientId": pid} for pid in test_ids]
 
-    # Build COCO annotations for each split
-    # filter_empty=True for train: removes images without annotations (DDP fix)
-    # filter_empty=False for valid/test: keep all images for fair evaluation
+    # Build COCO annotations for each split (includes normal/negative images)
     print("\nBuilding COCO dataset...")
-    build_coco_annotation(train_records, labels_df, image_dir, output_dir, "train", filter_empty=True)
-    build_coco_annotation(valid_records, labels_df, image_dir, output_dir, "valid", filter_empty=False)
-    build_coco_annotation(test_records, labels_df, image_dir, output_dir, "test", filter_empty=False)
+    build_coco_annotation(train_records, labels_df, image_dir, output_dir, "train")
+    build_coco_annotation(valid_records, labels_df, image_dir, output_dir, "valid")
+    build_coco_annotation(test_records, labels_df, image_dir, output_dir, "test")
 
     print(f"\nDone! COCO dataset saved to: {output_dir}")
     print("You can now use this directory with RF-DETR's model.train(dataset_dir=...)")
