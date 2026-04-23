@@ -105,26 +105,33 @@ echo "============================================================"
 pip install faster-coco-eval
 
 # Check for resume checkpoint (if previous SSL run was interrupted)
-# RF-DETR saves checkpoint.pth = training checkpoint (model+optimizer+scheduler)
+# RF-DETR saves: checkpoint.pth (training state) or last.ckpt (Lightning format)
 SSL_RESUME=""
 SSL_CKPT_DIR="/kaggle/working/checkpoints/rfdetr/rfdetr-finetune-ssl"
-SSL_RESUME_INPUT="/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/checkpoint.pth"
+SSL_RESUME_INPUT_PTH="/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/checkpoint.pth"
+SSL_RESUME_INPUT_CKPT="/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/last.ckpt"
 
-if [ -f "${SSL_RESUME_INPUT}" ]; then
-    SSL_RESUME="--resume ${SSL_RESUME_INPUT}"
-    echo "Resuming from uploaded checkpoint: ${SSL_RESUME_INPUT}"
+if [ -f "${SSL_RESUME_INPUT_PTH}" ]; then
+    SSL_RESUME="--resume ${SSL_RESUME_INPUT_PTH}"
+    echo "Resuming from uploaded checkpoint: ${SSL_RESUME_INPUT_PTH}"
+elif [ -f "${SSL_RESUME_INPUT_CKPT}" ]; then
+    SSL_RESUME="--resume ${SSL_RESUME_INPUT_CKPT}"
+    echo "Resuming from uploaded checkpoint: ${SSL_RESUME_INPUT_CKPT}"
 elif [ -f "${SSL_CKPT_DIR}/checkpoint.pth" ]; then
     SSL_RESUME="--resume ${SSL_CKPT_DIR}/checkpoint.pth"
     echo "Resuming from local checkpoint: ${SSL_CKPT_DIR}/checkpoint.pth"
+elif [ -f "${SSL_CKPT_DIR}/last.ckpt" ]; then
+    SSL_RESUME="--resume ${SSL_CKPT_DIR}/last.ckpt"
+    echo "Resuming from local checkpoint: ${SSL_CKPT_DIR}/last.ckpt"
 fi
 
-# Use torch.distributed.launch for multi-GPU (official RF-DETR method)
+# Detect GPU count for DDP
 NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
 echo "Detected ${NUM_GPUS} GPU(s)"
 
 if [ "${NUM_GPUS}" -gt 1 ]; then
-    echo "Using DDP with ${NUM_GPUS} GPUs via torch.distributed.launch"
-    python3 -m torch.distributed.launch --nproc_per_node=${NUM_GPUS} --use_env \
+    echo "Using DDP with ${NUM_GPUS} GPUs via torchrun"
+    torchrun --nproc_per_node=${NUM_GPUS} \
         src/train_rfdetr.py \
         --config configs/finetune_rfdetr.yaml \
         --ssl-backbone "${FINAL_BACKBONE}" \
@@ -148,7 +155,7 @@ echo "PHASE 3B: RF-DETR Fine-tuning (BASELINE — original DINOv2)"
 echo "============================================================"
 
 if [ "${NUM_GPUS}" -gt 1 ]; then
-    python3 -m torch.distributed.launch --nproc_per_node=${NUM_GPUS} --use_env \
+    torchrun --nproc_per_node=${NUM_GPUS} \
         src/train_rfdetr.py \
         --config configs/finetune_rfdetr.yaml \
         --run-name rfdetr-finetune
