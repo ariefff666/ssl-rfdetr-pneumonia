@@ -447,6 +447,7 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
         "batch_size": train_cfg["batch_size"],
         "grad_accum_steps": train_cfg["grad_accum_steps"],
         "output_dir": str(output_dir),
+        "device": local_rank, 
     }
 
     # Resume takes priority: loads model + optimizer + scheduler + epoch
@@ -460,8 +461,8 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
     if "learning_rate" in train_cfg:
         train_kwargs["lr"] = train_cfg["learning_rate"]
 
-    # W&B integration (only on main rank to avoid duplicate logging)
-    if log_cfg.get("use_wandb") and is_main:
+    # W&B integration (Berikan argumen ini ke SEMUA rank untuk mencegah deadlock)
+    if log_cfg.get("use_wandb"):
         train_kwargs["wandb"] = True
         train_kwargs["project"] = log_cfg["wandb_project"]
         train_kwargs["run"] = final_run_name
