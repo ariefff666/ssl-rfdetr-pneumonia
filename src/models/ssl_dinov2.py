@@ -210,21 +210,34 @@ class SSLDINOv2(nn.Module):
                     break
                 except AttributeError:
                     continue
+            
             if raw_backbone is None:
                 raise RuntimeError("Could not extract backbone from RF-DETR model")
+            
+            # Ambil bagian intinya (ViT encoder)
+            inner = raw_backbone
+            if isinstance(inner, nn.Sequential) or hasattr(inner, "__getitem__"):
+                try: inner = inner[0]
+                except: pass
+            
+            if hasattr(inner, "encoder"):
+                inner = inner.encoder
+            elif hasattr(inner, "body"):
+                inner = inner.body
+
+            self.student_backbone = copy.deepcopy(inner)
 
             # Detect embed_dim from the backbone's state dict
-            state_keys = list(raw_backbone.state_dict().keys())
+            state_keys = list(self.student_backbone.state_dict().keys())
             for k in state_keys:
                 if "cls_token" in k:
-                    embed_dim = raw_backbone.state_dict()[k].shape[-1]
+                    embed_dim = self.student_backbone.state_dict()[k].shape[-1]
                     break
             else:
                 embed_dim = 384  # Default for ViT-S
 
-            self.student_backbone = copy.deepcopy(raw_backbone)
             del _tmp  # Free memory
-            print(f"[SSL] Extracted RF-DETR backbone with embed_dim={embed_dim}")
+            print(f"[SSL] Extracted pure HF transformer with embed_dim={embed_dim}")
 
         else:
             # ================================================================
@@ -272,15 +285,26 @@ class SSLDINOv2(nn.Module):
         print(f"[SSL] Backbone embed_dim={embed_dim}, projection_dim={projection_dim}")
         print(f"[SSL] Backbone source: {backbone_source}")
 
+    def _extract_cls(self, outputs) -> torch.Tensor:
+        """Aman mengekstrak CLS token dari berbagai bentuk output"""
+        if hasattr(outputs, "last_hidden_state"):
+            return outputs.last_hidden_state[:, 0]
+        elif isinstance(outputs, (tuple, list)):
+            return outputs[0][:, 0]
+        else:
+            return outputs[:, 0]
+
     def forward_student(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through student backbone + head."""
-        features = self.student_backbone(x)  # [B, embed_dim]
+        outputs = self.student_backbone(x)
+        features = self._extract_cls(outputs)
         return self.student_head(features)
 
     def forward_teacher(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through teacher backbone + head (no grad)."""
         with torch.no_grad():
-            features = self.teacher_backbone(x)
+            outputs = self.teacher_backbone(x)
+            features = self._extract_cls(outputs)
             return self.teacher_head(features)
 
     def compute_loss(self, batch: dict) -> torch.Tensor:

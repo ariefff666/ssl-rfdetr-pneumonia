@@ -193,7 +193,7 @@ def inject_ssl_backbone(model, ssl_backbone_path: str) -> None:
     new_state = dict(rfdetr_state)
 
     # DETEKSI: Apakah ini Patch 16 (RF-DETR) atau Patch 14 (Facebook)?
-    is_patch16 = any("encoder.encoder" in k for k in ssl_state_dict.keys()) or any("patch_embeddings" in k for k in ssl_state_dict.keys())
+    is_patch16 = any("encoder.encoder" in k for k in ssl_state_dict.keys()) or any("patch_embeddings" in k for k in ssl_state_dict.keys()) or any("embeddings" in k for k in ssl_state_dict.keys())
 
     if is_patch16:
         print("[SSL] Format Terdeteksi: RF-DETR/HuggingFace Style (Patch 16)")
@@ -202,13 +202,13 @@ def inject_ssl_backbone(model, ssl_backbone_path: str) -> None:
         
         # Mapping langsung karena keys-nya pada dasarnya sama
         for rf_key in rfdetr_state.keys():
-            candidates = [rf_key, rf_key.replace("0.", "", 1), f"0.{rf_key}"]
-            for cand in candidates:
-                if cand in ssl_state_dict:
-                    if rfdetr_state[rf_key].shape == ssl_state_dict[cand].shape:
-                        new_state[rf_key] = ssl_state_dict[cand]
+            for ssl_key in ssl_state_dict.keys():
+                # Cek apakah nama kunci belakangnya persis sama
+                if rf_key == ssl_key or rf_key.endswith("." + ssl_key):
+                    if rfdetr_state[rf_key].shape == ssl_state_dict[ssl_key].shape:
+                        new_state[rf_key] = ssl_state_dict[ssl_key]
                         loaded += 1
-                    break
+                        break
                     
         backbone.load_state_dict(new_state)
         total = len(rfdetr_state)
