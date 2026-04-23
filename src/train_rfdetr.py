@@ -320,7 +320,8 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
     print(f"  Epochs: {train_cfg['epochs']}")
     print(f"  Batch size: {train_cfg['batch_size']}")
     print(f"  Grad accum: {train_cfg['grad_accum_steps']}")
-    print(f"  Effective batch: {train_cfg['batch_size'] * train_cfg['grad_accum_steps']}")
+    print(f"  Devices: {train_cfg.get('devices', 1)}")
+    print(f"  Effective batch: {train_cfg['batch_size'] * train_cfg['grad_accum_steps'] * train_cfg.get('devices', 1)}")
     print(f"  Output: {output_dir}")
     print(f"  W&B run: {final_run_name}")
 
@@ -331,6 +332,7 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
         "batch_size": train_cfg["batch_size"],
         "grad_accum_steps": train_cfg["grad_accum_steps"],
         "output_dir": str(output_dir),
+        "devices": train_cfg.get("devices", 1),
     }
 
     # Optional LR
