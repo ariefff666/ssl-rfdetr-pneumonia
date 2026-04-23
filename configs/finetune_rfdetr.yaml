@@ -24,7 +24,7 @@ training:
   epochs: 50
   batch_size: 4                   # Per-GPU; with grad_accum=4 → effective batch = 16
   grad_accum_steps: 4
-  devices: 2                      # Multi-GPU DDP (empty images filtered for stability)
+  # NOTE: 'devices' not set here — DDP handled externally by torchrun
   learning_rate: 0.0001
   weight_decay: 0.0001
   resume_from: null                # Path to checkpoint.pth to resume training from

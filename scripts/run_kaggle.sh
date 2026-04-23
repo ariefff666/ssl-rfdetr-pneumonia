@@ -19,7 +19,6 @@
 set -e  # Exit on error
 
 # --- NCCL Fix for Multi-GPU on Kaggle T4x2 ---
-# Disable P2P to prevent NCCL deadlock/timeout
 export NCCL_P2P_DISABLE=1
 export NCCL_IB_DISABLE=1
 
@@ -31,21 +30,14 @@ echo "============================================================"
 # Install dependencies
 pip install -q rfdetr albumentations wandb pycocotools scikit-learn tqdm pyyaml seaborn
 
-# Set W&B API key (replace with your key or set in Kaggle secrets)
-# export WANDB_API_KEY="your-wandb-api-key-here"
-
 # Navigate to project root and set Python path
 cd /kaggle/working/ssl-rfdetr-pneumonia
 export PYTHONPATH="/kaggle/working/ssl-rfdetr-pneumonia:$PYTHONPATH"
 
-# Ensure all package directories and __init__.py files exist
+# Ensure all package directories
 mkdir -p src/data src/models src/utils
-touch src/__init__.py
-touch src/data/__init__.py
-touch src/models/__init__.py
-touch src/utils/__init__.py
+touch src/__init__.py src/data/__init__.py src/models/__init__.py src/utils/__init__.py
 
-# Debug: verify package structure
 echo "--- Verifying package structure ---"
 find src -name "*.py" | head -20
 echo "-----------------------------------"
@@ -58,8 +50,7 @@ echo "============================================================"
 echo "PHASE 1: Preparing COCO dataset from RSNA CSV"
 echo "============================================================"
 
-# Force rebuild COCO dataset to apply empty image filter (DDP fix)
-# Empty images cause uneven data distribution → NCCL deadlock
+# Force rebuild COCO dataset
 rm -rf /kaggle/working/dataset_coco
 
 python3 src/data/prepare_coco.py --config configs/finetune_rfdetr.yaml
@@ -74,27 +65,16 @@ echo "============================================================"
 
 BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbone/backbone_epoch_50.pth"
 
-# Mengecek apakah file backbone sudah tersedia di Kaggle Input
 if [ -f "$BACKBONE_INPUT_PATH" ]; then
     echo "=> Backbone sudah ditemukan di: $BACKBONE_INPUT_PATH"
     echo "=> Melewati Phase 2 dan langsung menuju Phase 3..."
-    
-    # Simpan alamat backbone untuk dipakai di Phase 3
     FINAL_BACKBONE="$BACKBONE_INPUT_PATH"
 else
     echo "=> Backbone tidak ditemukan. Memulai Phase 2 dari awal/resume..."
-    
-    # Fix DINOv2 download conflict (only needed when actually running SSL training)
-    rm -rf /root/.cache/torch/hub/  
+    rm -rf /root/.cache/torch/hub/
     python3 -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
-    
-    # Jalankan training SSL
-    torchrun --nproc_per_node=2 src/train_ssl.py \
-        --config configs/ssl_pretrain.yaml
-        
-    if [ $? -ne 0 ]; then echo "Error di Phase 2! Menghentikan pipeline."; exit 1; fi
-    
-    # Jika run Phase 2 sukses, ini adalah lokasi output defaultnya
+    torchrun --nproc_per_node=2 src/train_ssl.py --config configs/ssl_pretrain.yaml
+    if [ $? -ne 0 ]; then echo "Error di Phase 2!"; exit 1; fi
     FINAL_BACKBONE="/kaggle/working/ssl-rfdetr-pneumonia/checkpoints/ssl/backbone_epoch_50.pth"
 fi
 
@@ -108,15 +88,28 @@ echo "============================================================"
 
 pip install faster-coco-eval
 
-# NOTE: Resume disabled — dataset was rebuilt with empty image filter.
-# To re-enable resume, uncomment below and upload checkpoint as Kaggle dataset.
-# SSL_RESUME="--resume /kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/last.ckpt"
+# Detect GPU count
+NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
+echo "Detected ${NUM_GPUS} GPU(s)"
 
-# DDP handled internally by Lightning (devices=2 in config)
-python3 src/train_rfdetr.py \
-    --config configs/finetune_rfdetr.yaml \
-    --ssl-backbone "${FINAL_BACKBONE}" \
-    --run-name rfdetr-finetune
+# Following Roboflow official docs for multi-GPU:
+# https://rfdetr.roboflow.com/learn/train/#multi-gpu-training
+# "python -m torch.distributed.launch --nproc_per_node=N --use_env main.py"
+# Code does NOT pass 'devices' to .train() — DDP is handled by torchrun.
+if [ "${NUM_GPUS}" -gt 1 ]; then
+    echo "Using DDP with ${NUM_GPUS} GPUs via torchrun (Roboflow official method)"
+    torchrun --nproc_per_node=${NUM_GPUS} \
+        src/train_rfdetr.py \
+        --config configs/finetune_rfdetr.yaml \
+        --ssl-backbone "${FINAL_BACKBONE}" \
+        --run-name rfdetr-finetune
+else
+    echo "Using single GPU"
+    python3 src/train_rfdetr.py \
+        --config configs/finetune_rfdetr.yaml \
+        --ssl-backbone "${FINAL_BACKBONE}" \
+        --run-name rfdetr-finetune
+fi
 
 # ==============================================================================
 # PHASE 3B: RF-DETR Fine-tuning WITHOUT SSL (Baseline)
@@ -126,9 +119,16 @@ echo "============================================================"
 echo "PHASE 3B: RF-DETR Fine-tuning (BASELINE — original DINOv2)"
 echo "============================================================"
 
-python3 src/train_rfdetr.py \
-    --config configs/finetune_rfdetr.yaml \
-    --run-name rfdetr-finetune
+if [ "${NUM_GPUS}" -gt 1 ]; then
+    torchrun --nproc_per_node=${NUM_GPUS} \
+        src/train_rfdetr.py \
+        --config configs/finetune_rfdetr.yaml \
+        --run-name rfdetr-finetune
+else
+    python3 src/train_rfdetr.py \
+        --config configs/finetune_rfdetr.yaml \
+        --run-name rfdetr-finetune
+fi
 
 # ==============================================================================
 # PHASE 4: Compare Results

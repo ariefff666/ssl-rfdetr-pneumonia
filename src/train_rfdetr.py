@@ -265,13 +265,18 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
     """Main RF-DETR fine-tuning pipeline."""
     cfg = load_config(config_path)
 
+    # DDP rank detection (set by torchrun, defaults to 0 for single-GPU)
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    is_main = (local_rank == 0)
+
     # Determine mode
     is_ssl = ssl_backbone_path is not None
     mode_str = "WITH SSL backbone" if is_ssl else "BASELINE (original DINOv2)"
 
-    print("=" * 70)
-    print(f"RF-DETR Fine-Tuning — {mode_str}")
-    print("=" * 70)
+    if is_main:
+        print("=" * 70)
+        print(f"RF-DETR Fine-Tuning — {mode_str}")
+        print("=" * 70)
 
     # -------------------------------------------------------------------------
     # Prepare dataset (COCO format)
@@ -287,13 +292,17 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
 
     # Check if COCO dataset exists; if not, run preparation
     coco_train_ann = Path(dataset_dir) / "train" / "_annotations.coco.json"
-    if not coco_train_ann.exists():
+    if is_main and not coco_train_ann.exists():
         print(f"\nCOCO dataset not found. Running data preparation (fraction={data_fraction})...")
         from src.data.prepare_coco import main as prepare_main
         prepare_main(config_path, data_fraction_override=data_fraction,
                      output_dir_override=dataset_dir)
-    else:
+    elif is_main:
         print(f"\nCOCO dataset found at: {dataset_dir}")
+
+    # Barrier: wait for rank 0 to finish data prep before others proceed
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
 
     # -------------------------------------------------------------------------
     # Initialize RF-DETR model
@@ -301,7 +310,8 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
     model_cfg = cfg["model"]
     ModelClass = get_model_class(model_cfg["variant"])
 
-    print(f"\nInitializing {model_cfg['variant']}...")
+    if is_main:
+        print(f"\nInitializing {model_cfg['variant']}...")
     model = ModelClass()
 
     # -------------------------------------------------------------------------
@@ -316,54 +326,56 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
     pretrain_weights_path = None
 
     if is_ssl:
-        inject_ssl_backbone(model, ssl_backbone_path)
-
-        # Save modified model as a full checkpoint for .train() to load.
-        # RF-DETR's internal hierarchy is non-standard, so we need to
-        # discover where the actual nn.Module with state_dict() lives.
         ckpt_cfg = cfg["checkpoint"]
         output_dir_base = Path(ckpt_cfg["output_dir"])
         output_dir_base.mkdir(parents=True, exist_ok=True)
+        pretrain_weights_path = str(output_dir_base / "rfdetr_with_ssl_backbone.pth")
 
-        # Discover the internal nn.Module
-        internal_module = None
-        search_paths = [
-            "model.model.model",  # RFDETRSmall → ModelContext → LWDETR
-            "model.model",        # RFDETRSmall → LWDETR
-            "model",              # Fallback
-        ]
+        if is_main:
+            # Only rank 0 does SSL injection and saves weights
+            inject_ssl_backbone(model, ssl_backbone_path)
 
-        # Debug: print object types at each level
-        print("\n[SSL] Discovering RF-DETR internal structure:")
-        obj = model
-        depth = 0
-        while hasattr(obj, 'model') and depth < 5:
-            has_sd = callable(getattr(obj, 'state_dict', None))
-            print(f"[SSL]   {'model.' * depth}model → {type(obj).__name__} (state_dict={has_sd})")
-            obj = obj.model
-            depth += 1
-        has_sd = callable(getattr(obj, 'state_dict', None))
-        print(f"[SSL]   {'model.' * depth} → {type(obj).__name__} (state_dict={has_sd})")
+            # Save modified model as a full checkpoint for .train() to load.
+            internal_module = None
+            search_paths = [
+                "model.model.model",
+                "model.model",
+                "model",
+            ]
 
-        for attr_path in search_paths:
+            print("\n[SSL] Discovering RF-DETR internal structure:")
             obj = model
-            try:
-                for attr in attr_path.split("."):
-                    obj = getattr(obj, attr)
-                if callable(getattr(obj, 'state_dict', None)):
-                    internal_module = obj
-                    print(f"[SSL] Found saveable module at: {attr_path} ({type(obj).__name__})")
-                    break
-            except AttributeError:
-                continue
+            depth = 0
+            while hasattr(obj, 'model') and depth < 5:
+                has_sd = callable(getattr(obj, 'state_dict', None))
+                print(f"[SSL]   {'model.' * depth}model → {type(obj).__name__} (state_dict={has_sd})")
+                obj = obj.model
+                depth += 1
+            has_sd = callable(getattr(obj, 'state_dict', None))
+            print(f"[SSL]   {'model.' * depth} → {type(obj).__name__} (state_dict={has_sd})")
 
-        if internal_module is not None:
-            pretrain_weights_path = str(output_dir_base / "rfdetr_with_ssl_backbone.pth")
-            torch.save(internal_module.state_dict(), pretrain_weights_path)
-            print(f"[SSL] Saved SSL-injected model to: {pretrain_weights_path}")
-        else:
-            print("[SSL] WARNING: Could not find internal module with state_dict().")
-            print("[SSL] Proceeding with direct backbone injection (may be overwritten by .train()).")
+            for attr_path in search_paths:
+                obj = model
+                try:
+                    for attr in attr_path.split("."):
+                        obj = getattr(obj, attr)
+                    if callable(getattr(obj, 'state_dict', None)):
+                        internal_module = obj
+                        print(f"[SSL] Found saveable module at: {attr_path} ({type(obj).__name__})")
+                        break
+                except AttributeError:
+                    continue
+
+            if internal_module is not None:
+                torch.save(internal_module.state_dict(), pretrain_weights_path)
+                print(f"[SSL] Saved SSL-injected model to: {pretrain_weights_path}")
+            else:
+                print("[SSL] WARNING: Could not find internal module with state_dict().")
+                pretrain_weights_path = None
+
+        # Barrier: all ranks wait for rank 0 to finish saving weights
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
 
     # -------------------------------------------------------------------------
     # Training
@@ -382,29 +394,28 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
     output_dir = Path(ckpt_cfg["output_dir"]) / final_run_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\nStarting training...")
-    print(f"  Epochs: {train_cfg['epochs']}")
-    print(f"  Batch size: {train_cfg['batch_size']}")
-    print(f"  Grad accum: {train_cfg['grad_accum_steps']}")
-    print(f"  Devices: {train_cfg.get('devices', 1)}")
-    print(f"  Effective batch: {train_cfg['batch_size'] * train_cfg['grad_accum_steps'] * train_cfg.get('devices', 1)}")
-    print(f"  Output: {output_dir}")
-    print(f"  W&B run: {final_run_name}")
-    if pretrain_weights_path:
-        print(f"  Pretrain weights: {pretrain_weights_path} (SSL-injected)")
+    if is_main:
+        print(f"\nStarting training...")
+        print(f"  Epochs: {train_cfg['epochs']}")
+        print(f"  Batch size: {train_cfg['batch_size']}")
+        print(f"  Grad accum: {train_cfg['grad_accum_steps']}")
+        print(f"  Output: {output_dir}")
+        print(f"  W&B run: {final_run_name}")
+        if pretrain_weights_path:
+            print(f"  Pretrain weights: {pretrain_weights_path} (SSL-injected)")
     # Resolve resume path: CLI arg > config
     resume_path = resume_from or train_cfg.get("resume_from")
-    if resume_path:
+    if resume_path and is_main:
         print(f"  Resume from: {resume_path}")
 
-    # Build training kwargs for RF-DETR's .train() method
+    # Build training kwargs — following Roboflow docs:
+    # Do NOT pass 'devices' — DDP is handled externally by torchrun.
     train_kwargs = {
         "dataset_dir": dataset_dir,
         "epochs": train_cfg["epochs"],
         "batch_size": train_cfg["batch_size"],
         "grad_accum_steps": train_cfg["grad_accum_steps"],
         "output_dir": str(output_dir),
-        "devices": train_cfg.get("devices", 1),
     }
 
     # Resume takes priority: loads model + optimizer + scheduler + epoch
@@ -418,8 +429,8 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
     if "learning_rate" in train_cfg:
         train_kwargs["lr"] = train_cfg["learning_rate"]
 
-    # W&B integration (built into rfdetr)
-    if log_cfg.get("use_wandb"):
+    # W&B integration (only on main rank to avoid duplicate logging)
+    if log_cfg.get("use_wandb") and is_main:
         train_kwargs["wandb"] = True
         train_kwargs["project"] = log_cfg["wandb_project"]
         train_kwargs["run"] = final_run_name
@@ -431,27 +442,6 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
             train_kwargs["early_stopping_patience"] = train_cfg["early_stopping_patience"]
         if "early_stopping_min_delta" in train_cfg:
             train_kwargs["early_stopping_min_delta"] = train_cfg["early_stopping_min_delta"]
-
-    # -------------------------------------------------------------------------
-    # Monkey-patch Lightning Trainer for DDP stability
-    # -------------------------------------------------------------------------
-    # RF-DETR's .train() creates a Lightning Trainer internally.
-    # With devices > 1, DDP deadlocks because RF-DETR has parameters not used
-    # in every forward pass. "find_unused_parameters=True" fixes this.
-    # We must patch the Trainer since RF-DETR doesn't expose strategy parameter.
-    if train_kwargs.get("devices", 1) > 1:
-        import pytorch_lightning as pl
-        _original_trainer_init = pl.Trainer.__init__
-
-        def _patched_trainer_init(self, *args, **kwargs):
-            # Force ddp_find_unused_parameters_true strategy
-            if kwargs.get("devices", 1) > 1 or kwargs.get("num_nodes", 1) > 1:
-                kwargs["strategy"] = "ddp_find_unused_parameters_true"
-                print(f"  [DDP FIX] Patched strategy → ddp_find_unused_parameters_true")
-            _original_trainer_init(self, *args, **kwargs)
-
-        pl.Trainer.__init__ = _patched_trainer_init
-        print("  [DDP FIX] Lightning Trainer patched for multi-GPU stability")
 
     start_time = time.time()
     model.train(**train_kwargs)
