@@ -65,6 +65,10 @@ echo "============================================================"
 
 BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbone/backbone_epoch_50.pth"
 
+# Fix DINOv2 download conflict
+rm -rf /root/.cache/torch/hub/  
+python -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
+
 # Mengecek apakah file backbone sudah tersedia di Kaggle Input
 if [ -f "$BACKBONE_INPUT_PATH" ]; then
     echo "=> Backbone sudah ditemukan di: $BACKBONE_INPUT_PATH"
@@ -74,10 +78,6 @@ if [ -f "$BACKBONE_INPUT_PATH" ]; then
     FINAL_BACKBONE="$BACKBONE_INPUT_PATH"
 else
     echo "=> Backbone tidak ditemukan. Memulai Phase 2 dari awal/resume..."
-    
-    # Fix DINOv2 download conflict
-    rm -rf /root/.cache/torch/hub/  
-    python -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
     
     # Jalankan training SSL
     torchrun --nproc_per_node=2 src/train_ssl.py \
