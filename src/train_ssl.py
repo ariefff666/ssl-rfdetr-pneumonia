@@ -144,6 +144,7 @@ def main(config_path: str) -> None:
         backbone_name=cfg["model"]["backbone"],
         projection_dim=cfg["model"]["projection_dim"],
         hidden_dim=cfg["model"]["hidden_dim"],
+        backbone_source=cfg["model"].get("backbone_source", "torchhub"),
     ).to(device)
 
     if world_size > 1:

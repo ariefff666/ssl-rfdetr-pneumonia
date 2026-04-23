@@ -138,6 +138,29 @@ class DINOLoss(nn.Module):
         )
 
 
+class _HFBackboneWrapper(nn.Module):
+    """
+    Wrapper to make a HuggingFace Dinov2 backbone behave like the Facebook
+    DINOv2 backbone (return CLS token features as [B, embed_dim]).
+    """
+
+    def __init__(self, hf_backbone, embed_dim: int):
+        super().__init__()
+        self.backbone = hf_backbone
+        self.embed_dim = embed_dim
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        outputs = self.backbone(x)
+        # HuggingFace returns (last_hidden_state, pooler_output) or similar
+        if hasattr(outputs, "last_hidden_state"):
+            # Take CLS token (first token)
+            return outputs.last_hidden_state[:, 0]
+        elif isinstance(outputs, (tuple, list)):
+            return outputs[0][:, 0]
+        else:
+            return outputs[:, 0]
+
+
 class SSLDINOv2(nn.Module):
     """
     Full DINOv2 self-distillation system for continual pre-training.
@@ -151,6 +174,8 @@ class SSLDINOv2(nn.Module):
         hidden_dim: Hidden dimension of the projection head MLP.
         out_dim: Number of prototypes (output dimension of the final layer).
         teacher_momentum: EMA momentum for updating teacher from student.
+        backbone_source: 'torchhub' (Facebook DINOv2, patch14) or
+                         'rfdetr' (extract from RF-DETR, patch16 — recommended for compatibility).
     """
 
     def __init__(
@@ -160,22 +185,62 @@ class SSLDINOv2(nn.Module):
         hidden_dim: int = 2048,
         out_dim: int = 65536,
         teacher_momentum: float = 0.996,
+        backbone_source: str = "torchhub",
     ):
         super().__init__()
         self.teacher_momentum = teacher_momentum
+        self.backbone_source = backbone_source
 
-        # Load pre-trained DINOv2 backbone from torch hub
-        print(f"[SSL] Loading DINOv2 backbone: {backbone_name}")
-        self.student_backbone = torch.hub.load(
-            "facebookresearch/dinov2", backbone_name
-        )
-        embed_dim = self.student_backbone.embed_dim
+        if backbone_source == "rfdetr":
+            # ================================================================
+            # RECOMMENDED for full RF-DETR compatibility (patch_size=16)
+            # Extract the DINOv2 backbone directly from RF-DETR
+            # ================================================================
+            print("[SSL] Loading backbone from RF-DETR (patch_size=16, HuggingFace DINOv2)")
+            import rfdetr
+            _tmp = rfdetr.RFDETRSmall()
+            # Locate backbone inside RF-DETR
+            raw_backbone = None
+            for attr_path in ["model.backbone", "model.model.backbone"]:
+                obj = _tmp
+                try:
+                    for attr in attr_path.split("."):
+                        obj = getattr(obj, attr)
+                    raw_backbone = obj
+                    break
+                except AttributeError:
+                    continue
+            if raw_backbone is None:
+                raise RuntimeError("Could not extract backbone from RF-DETR model")
+
+            # Detect embed_dim from the backbone's state dict
+            state_keys = list(raw_backbone.state_dict().keys())
+            for k in state_keys:
+                if "cls_token" in k:
+                    embed_dim = raw_backbone.state_dict()[k].shape[-1]
+                    break
+            else:
+                embed_dim = 384  # Default for ViT-S
+
+            self.student_backbone = copy.deepcopy(raw_backbone)
+            del _tmp  # Free memory
+            print(f"[SSL] Extracted RF-DETR backbone with embed_dim={embed_dim}")
+
+        else:
+            # ================================================================
+            # LEGACY: Load from Facebook's torch.hub (patch_size=14)
+            # Key mapping will handle conversion during RF-DETR injection
+            # ================================================================
+            print(f"[SSL] Loading DINOv2 backbone: {backbone_name}")
+            self.student_backbone = torch.hub.load(
+                "facebookresearch/dinov2", backbone_name
+            )
+            embed_dim = self.student_backbone.embed_dim
 
         # Enable gradient checkpointing for memory savings on T4 GPUs
         if hasattr(self.student_backbone, 'set_grad_checkpointing'):
             self.student_backbone.set_grad_checkpointing(True)
-        else:
-            # Manual gradient checkpointing for DINOv2 ViT blocks
+        elif hasattr(self.student_backbone, 'blocks'):
             for block in self.student_backbone.blocks:
                 block.use_checkpoint = True
 
@@ -205,6 +270,7 @@ class SSLDINOv2(nn.Module):
         )
 
         print(f"[SSL] Backbone embed_dim={embed_dim}, projection_dim={projection_dim}")
+        print(f"[SSL] Backbone source: {backbone_source}")
 
     def forward_student(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through student backbone + head."""

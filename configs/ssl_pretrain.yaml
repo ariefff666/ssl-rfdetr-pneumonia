@@ -8,15 +8,23 @@ data:
   # Path to the root directory containing all RSNA PNG images.
   # On Kaggle, this is typically: /kaggle/input/rsna-pneumonia-detection-challenge/stage_2_train_images_png
   image_dir: "/kaggle/input/datasets/stevezeyuzhang/rsna-pneumonia-detection-challenge/rsna-pneumonia-detection-challenge/stage_2_train_images_png"
-  image_size: 224                # Must be multiple of 14 (DINOv2 patch_size=14). 224 = 14 × 16 (standard DINOv2 resolution)
+  image_size: 224                # 224 is divisible by both 14 and 16
   num_workers: 2
 
 # --- Model ---
 model:
   # DINOv2 backbone variant used inside RF-DETR
-  backbone: "dinov2_vits14_reg"   # ViT-Small with registers (RF-DETR-S backbone)
+  backbone: "dinov2_vits14_reg"   # ViT-Small with registers (Facebook DINOv2)
   projection_dim: 256             # Projection head output dimension
   hidden_dim: 2048                # Projection head hidden dimension
+
+  # IMPORTANT: RF-DETR RFDETRSmall uses patch_size=16 internally (HuggingFace DINOv2).
+  # For full compatibility when re-training:
+  #   1. Set backbone_source to "rfdetr" to extract the backbone from RF-DETR
+  #   2. This ensures patch_size=16 and identical key naming
+  # For the current run (backbone_source=torchhub), key mapping handles
+  # the patch_size=14→16 conversion during injection.
+  backbone_source: "torchhub"     # "torchhub" (default, patch14) or "rfdetr" (recommended, patch16)
 
 # --- SSL Training ---
 training:
@@ -37,6 +45,7 @@ augmentation:
   global_crop_scale: [0.4, 1.0]   # Random resized crop scale range for global views
   local_crop_scale: [0.05, 0.4]   # Scale range for local (small) crops
   num_local_crops: 4              # Number of small local crop views (reduced from 6 for T4 memory)
+  # Local crop size: 98 for patch_size=14, 96 for patch_size=16 (auto-detected)
   # Medical-domain specific: we do NOT use color jittering heavily
   # because X-ray images have meaningful grayscale intensity distributions
   brightness: 0.2
@@ -48,11 +57,11 @@ augmentation:
 checkpoint:
   save_dir: "/kaggle/working/checkpoints/ssl"
   save_every_epochs: 5
-  resume_from: "/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoints/checkpoint_epoch_10.pth"               # Path to checkpoint to resume from
+  resume_from: null               # Path to checkpoint to resume from
 
 # --- Logging ---
 logging:
   use_wandb: true
   wandb_project: "ssl-rfdetr-pneumonia"
-  wandb_run_name: "ssl-continual-pretrain-01(resume-epoch-10)"
+  wandb_run_name: "ssl-continual-pretrain"
   log_every_steps: 50

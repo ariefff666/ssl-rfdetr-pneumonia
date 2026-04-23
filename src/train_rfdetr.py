@@ -70,36 +70,81 @@ def get_model_class(variant: str):
     return variant_map[variant]
 
 
+def _normalize_rfdetr_key(key: str) -> str:
+    """
+    Normalize an RF-DETR backbone key to DINOv2-equivalent naming.
+
+    RF-DETR uses HuggingFace's Dinov2Model internally, which has different
+    key naming than Facebook's DINOv2 from torch.hub. This function converts
+    RF-DETR keys to the Facebook DINOv2 naming convention.
+
+    Example mappings:
+        0.encoder.encoder.embeddings.cls_token         →  cls_token
+        0.encoder.encoder.encoder.layer.0.norm1.weight →  blocks.0.norm1.weight
+        0.encoder.encoder.encoder.layer.0.attention.attention.query.weight → blocks.0.attn.q.weight
+        0.encoder.encoder.encoder.layer.0.layer_scale1.lambda1            → blocks.0.ls1.gamma
+        0.encoder.encoder.layernorm.weight             →  norm.weight
+    """
+    import re
+
+    # Remove leading index prefix (e.g., "0.")
+    key = re.sub(r"^\d+\.", "", key)
+
+    # Embeddings: strip the long prefix
+    key = key.replace("encoder.encoder.embeddings.", "")
+
+    # Patch embeddings
+    key = key.replace("patch_embeddings.projection.", "patch_embed.proj.")
+
+    # Position embeddings
+    key = key.replace("position_embeddings", "pos_embed")
+
+    # Encoder layers → blocks
+    key = re.sub(r"encoder\.encoder\.encoder\.layer\.(\d+)\.", r"blocks.\1.", key)
+    key = re.sub(r"encoder\.encoder\.layer\.(\d+)\.", r"blocks.\1.", key)
+    key = re.sub(r"encoder\.layer\.(\d+)\.", r"blocks.\1.", key)
+
+    # Attention
+    key = key.replace("attention.output.dense.", "attn.proj.")
+    key = key.replace("attention.attention.query.", "attn.q.")
+    key = key.replace("attention.attention.key.", "attn.k.")
+    key = key.replace("attention.attention.value.", "attn.v.")
+
+    # Layer scale
+    key = key.replace("layer_scale1.lambda1", "ls1.gamma")
+    key = key.replace("layer_scale2.lambda1", "ls2.gamma")
+
+    # Final layer norm
+    key = key.replace("encoder.encoder.layernorm.", "norm.")
+    key = re.sub(r"^encoder\.layernorm\.", "norm.", key)
+
+    return key
+
+
 def inject_ssl_backbone(model, ssl_backbone_path: str) -> None:
     """
-    Replace the DINOv2 backbone weights inside the RF-DETR model
-    with our domain-adapted SSL pre-trained weights.
+    Inject SSL pre-trained DINOv2 weights into RF-DETR's backbone.
 
-    This is the critical step that connects the SSL phase to detection.
+    Handles the architecture mismatch between Facebook DINOv2 (patch_size=14,
+    fused QKV, fused SwiGLU w12) and RF-DETR's HuggingFace DINOv2 backbone
+    (patch_size=16, separate Q/K/V, separate w1/w2) by:
+
+    1. Normalizing key names between the two formats
+    2. Splitting fused QKV weights → separate Q, K, V
+    3. Splitting fused SwiGLU w12 → separate w1, w2
+    4. Skipping incompatible layers (patch_embed, pos_embed)
 
     Args:
         model: An instantiated RF-DETR model object.
-        ssl_backbone_path: Path to the backbone_epoch_N.pth file from SSL pre-training.
+        ssl_backbone_path: Path to backbone_epoch_N.pth from SSL pre-training.
     """
     print(f"\n[SSL] Loading domain-adapted backbone from: {ssl_backbone_path}")
 
     ssl_state_dict = torch.load(ssl_backbone_path, map_location="cpu", weights_only=True)
 
-    # The RF-DETR model stores its backbone under model.model.backbone
-    # We need to find the DINOv2 backbone within RF-DETR's architecture
-    # and replace its weights with our SSL-adapted ones.
-    #
-    # RF-DETR internally uses a DINOv2 ViT as backbone.
-    # The exact attribute path depends on rfdetr's internal structure.
-    # We attempt multiple common patterns for compatibility.
+    # --- Locate the backbone inside RF-DETR ---
     backbone = None
-    backbone_attr_paths = [
-        "model.backbone",
-        "model.model.backbone",
-        "backbone",
-    ]
-
-    for attr_path in backbone_attr_paths:
+    for attr_path in ["model.backbone", "model.model.backbone", "backbone"]:
         obj = model
         try:
             for attr in attr_path.split("."):
@@ -111,51 +156,108 @@ def inject_ssl_backbone(model, ssl_backbone_path: str) -> None:
             continue
 
     if backbone is None:
-        print("[SSL] WARNING: Could not locate backbone via attribute path.")
-        print("[SSL] Attempting state_dict key matching instead...")
-        # Fallback: match keys by pattern and load partially
-        _load_ssl_weights_by_key_matching(model, ssl_state_dict)
+        print("[SSL] ERROR: Could not locate backbone in RF-DETR model.")
         return
 
-    # Load SSL weights into the backbone
-    missing, unexpected = backbone.load_state_dict(ssl_state_dict, strict=False)
+    rfdetr_state = backbone.state_dict()
 
-    if missing:
-        print(f"[SSL] Missing keys (will use random init): {len(missing)}")
-        for k in missing[:5]:
-            print(f"       - {k}")
-    if unexpected:
-        print(f"[SSL] Unexpected keys (ignored): {len(unexpected)}")
-        for k in unexpected[:5]:
-            print(f"       - {k}")
+    # --- Build reverse map: normalized_key → rfdetr_original_key ---
+    rfdetr_norm_map = {}  # normalized DINOv2-style key → original RF-DETR key
+    for k in rfdetr_state:
+        norm_k = _normalize_rfdetr_key(k)
+        rfdetr_norm_map[norm_k] = k
 
-    loaded = len(ssl_state_dict) - len(unexpected)
-    print(f"[SSL] Successfully loaded {loaded}/{len(ssl_state_dict)} SSL backbone parameters")
+    # --- Diagnostic info ---
+    rfdetr_keys = sorted(rfdetr_state.keys())
+    ssl_keys = sorted(ssl_state_dict.keys())
+    print(f"[SSL] RF-DETR backbone: {len(rfdetr_keys)} parameters")
+    print(f"[SSL] SSL backbone: {len(ssl_keys)} parameters")
+    print(f"[SSL] RF-DETR keys (sample): {rfdetr_keys[:3]}")
+    print(f"[SSL] Normalized (sample):   {[_normalize_rfdetr_key(k) for k in rfdetr_keys[:3]]}")
+    print(f"[SSL] SSL keys (sample):     {ssl_keys[:3]}")
 
-
-def _load_ssl_weights_by_key_matching(model, ssl_state_dict: dict) -> None:
-    """
-    Fallback: load SSL weights by matching key suffixes.
-
-    If we can't find the exact backbone attribute, we match SSL state dict
-    keys against the full model's state dict by suffix pattern.
-    """
-    model_state = model.state_dict() if hasattr(model, 'state_dict') else {}
-    loaded_count = 0
+    # --- Transfer weights ---
+    new_state = dict(rfdetr_state)  # Start from RF-DETR's pre-trained weights
+    loaded, skipped_incompat, skipped_shape, skipped_nomap = 0, 0, 0, 0
 
     for ssl_key, ssl_val in ssl_state_dict.items():
-        # Try to find a matching key in the model
-        for model_key in model_state:
-            if model_key.endswith(ssl_key) or ssl_key in model_key:
-                if model_state[model_key].shape == ssl_val.shape:
-                    model_state[model_key] = ssl_val
-                    loaded_count += 1
-                    break
 
-    if loaded_count > 0 and hasattr(model, 'load_state_dict'):
-        model.load_state_dict(model_state, strict=False)
+        # Skip inherently incompatible layers (different patch size / resolution)
+        if ssl_key in ("pos_embed", "register_tokens") or "patch_embed" in ssl_key:
+            skipped_incompat += 1
+            continue
 
-    print(f"[SSL] Key-matching loaded {loaded_count} parameters")
+        # ----- Fused QKV → separate Q, K, V -----
+        if ".attn.qkv." in ssl_key:
+            suffix = ssl_key.rsplit(".", 1)[-1]  # "weight" or "bias"
+            block_prefix = ssl_key.split(".attn.qkv.")[0]  # "blocks.N"
+
+            q_norm = f"{block_prefix}.attn.q.{suffix}"
+            k_norm = f"{block_prefix}.attn.k.{suffix}"
+            v_norm = f"{block_prefix}.attn.v.{suffix}"
+
+            if all(nk in rfdetr_norm_map for nk in [q_norm, k_norm, v_norm]):
+                dim = ssl_val.shape[0] // 3
+                q_val, k_val, v_val = ssl_val[:dim], ssl_val[dim:2*dim], ssl_val[2*dim:]
+
+                for nk, val in [(q_norm, q_val), (k_norm, k_val), (v_norm, v_val)]:
+                    target_key = rfdetr_norm_map[nk]
+                    if rfdetr_state[target_key].shape == val.shape:
+                        new_state[target_key] = val
+                        loaded += 1
+                    else:
+                        skipped_shape += 1
+            else:
+                skipped_nomap += 1
+            continue
+
+        # ----- Fused SwiGLU w12 → separate w1, w2 -----
+        if ".mlp.w12." in ssl_key:
+            suffix = ssl_key.rsplit(".", 1)[-1]
+            block_prefix = ssl_key.split(".mlp.w12.")[0]
+
+            w1_norm = f"{block_prefix}.mlp.w1.{suffix}"
+            w2_norm = f"{block_prefix}.mlp.w2.{suffix}"
+
+            if all(nk in rfdetr_norm_map for nk in [w1_norm, w2_norm]):
+                dim = ssl_val.shape[0] // 2
+                w1_val, w2_val = ssl_val[:dim], ssl_val[dim:]
+
+                for nk, val in [(w1_norm, w1_val), (w2_norm, w2_val)]:
+                    target_key = rfdetr_norm_map[nk]
+                    if rfdetr_state[target_key].shape == val.shape:
+                        new_state[target_key] = val
+                        loaded += 1
+                    else:
+                        skipped_shape += 1
+            else:
+                skipped_nomap += 1
+            continue
+
+        # ----- Direct 1:1 mapping -----
+        if ssl_key in rfdetr_norm_map:
+            target_key = rfdetr_norm_map[ssl_key]
+            if rfdetr_state[target_key].shape == ssl_val.shape:
+                new_state[target_key] = ssl_val
+                loaded += 1
+            else:
+                skipped_shape += 1
+                print(f"[SSL]   Shape mismatch: {ssl_key} "
+                      f"SSL={list(ssl_val.shape)} vs RF-DETR={list(rfdetr_state[target_key].shape)}")
+        else:
+            skipped_nomap += 1
+
+    # --- Apply updated weights ---
+    backbone.load_state_dict(new_state)
+
+    total = len(ssl_state_dict)
+    print(f"\n[SSL] === Injection Summary ===")
+    print(f"[SSL]   Loaded:       {loaded}/{total} parameters")
+    print(f"[SSL]   Incompatible: {skipped_incompat} (patch_embed, pos_embed — expected)")
+    print(f"[SSL]   Shape mismatch: {skipped_shape}")
+    print(f"[SSL]   No mapping:   {skipped_nomap}")
+    pct = (loaded / total * 100) if total > 0 else 0
+    print(f"[SSL]   Transfer rate: {pct:.1f}%")
 
 
 def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) -> None:
