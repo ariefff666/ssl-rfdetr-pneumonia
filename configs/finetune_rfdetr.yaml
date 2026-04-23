@@ -48,4 +48,4 @@ checkpoint:
 logging:
   use_wandb: true
   wandb_project: "ssl-rfdetr-pneumonia"
-  wandb_run_name: "rfdetr-finetune-01"
+  wandb_run_name: "rfdetr-finetune-02"
