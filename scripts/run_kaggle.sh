@@ -92,13 +92,13 @@ pip install faster-coco-eval
 NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
 echo "Detected ${NUM_GPUS} GPU(s)"
 
-# Following Roboflow official docs for multi-GPU:
-# https://rfdetr.roboflow.com/learn/train/#multi-gpu-training
-# "python -m torch.distributed.launch --nproc_per_node=N --use_env main.py"
-# Code does NOT pass 'devices' to .train() — DDP is handled by torchrun.
+# Jalankan torchrun — train_rfdetr.py sekarang sudah handle dist.init_process_group()
+# secara benar sehingga barrier() berfungsi dan race condition tidak terjadi
 if [ "${NUM_GPUS}" -gt 1 ]; then
-    echo "Using DDP with ${NUM_GPUS} GPUs via torchrun (Roboflow official method)"
-    torchrun --nproc_per_node=${NUM_GPUS} \
+    echo "Using DDP with ${NUM_GPUS} GPUs via torchrun"
+    torchrun \
+        --nproc_per_node=${NUM_GPUS} \
+        --master_port=29500 \
         src/train_rfdetr.py \
         --config configs/finetune_rfdetr.yaml \
         --ssl-backbone "${FINAL_BACKBONE}" \
@@ -120,7 +120,9 @@ echo "PHASE 3B: RF-DETR Fine-tuning (BASELINE — original DINOv2)"
 echo "============================================================"
 
 if [ "${NUM_GPUS}" -gt 1 ]; then
-    torchrun --nproc_per_node=${NUM_GPUS} \
+    torchrun \
+        --nproc_per_node=${NUM_GPUS} \
+        --master_port=29501 \
         src/train_rfdetr.py \
         --config configs/finetune_rfdetr.yaml \
         --run-name rfdetr-finetune

@@ -34,11 +34,41 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 import torch
+import torch.distributed as dist
 import yaml
 import wandb
 
 from src.utils.logger import init_wandb, finish_wandb
 
+def setup_distributed() -> tuple[int, int, int]:
+    """
+    Initialize distributed training jika diluncurkan via torchrun.
+    Harus dipanggil sebelum operasi apapun yang butuh sinkronisasi antar proses.
+    """
+    if "RANK" not in os.environ:
+        return 0, 0, 1  # Single GPU / non-distributed
+
+    rank = int(os.environ["RANK"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl", init_method="env://")
+
+    torch.cuda.set_device(local_rank)
+    return rank, local_rank, world_size
+
+
+def cleanup_distributed() -> None:
+    """Cleanup distributed process group."""
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def barrier() -> None:
+    """Barrier yang aman — no-op jika distributed tidak aktif."""
+    if dist.is_initialized():
+        dist.barrier()
 
 def load_config(config_path: str) -> dict:
     """Load YAML configuration."""
@@ -265,9 +295,12 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
     """Main RF-DETR fine-tuning pipeline."""
     cfg = load_config(config_path)
 
-    # DDP rank detection (set by torchrun, defaults to 0 for single-GPU)
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    is_main = (local_rank == 0)
+    # ---- Inisialisasi distributed PERTAMA KALI sebelum operasi apapun ----
+    rank, local_rank, world_size = setup_distributed()
+    is_main = (rank == 0)
+
+    if is_main:
+        print(f"[DDP] world_size={world_size}, rank={rank}, local_rank={local_rank}")
 
     # Determine mode
     is_ssl = ssl_backbone_path is not None
@@ -301,8 +334,7 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
         print(f"\nCOCO dataset found at: {dataset_dir}")
 
     # Barrier: wait for rank 0 to finish data prep before others proceed
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
+    barrier()
 
     # -------------------------------------------------------------------------
     # Initialize RF-DETR model
@@ -374,8 +406,7 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
                 pretrain_weights_path = None
 
         # Barrier: all ranks wait for rank 0 to finish saving weights
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
+        barrier()
 
     # -------------------------------------------------------------------------
     # Training
@@ -443,6 +474,9 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
         if "early_stopping_min_delta" in train_cfg:
             train_kwargs["early_stopping_min_delta"] = train_cfg["early_stopping_min_delta"]
 
+    # Sinkronisasi final sebelum semua rank mulai training bersama
+    barrier()
+
     start_time = time.time()
     model.train(**train_kwargs)
     total_time = time.time() - start_time
@@ -468,6 +502,9 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
     with open(meta_path, "w") as f:
         json.dump(metadata, f, indent=2)
     print(f"Metadata saved to: {meta_path}")
+
+    # Cleanup distributed
+    cleanup_distributed()
 
 
 if __name__ == "__main__":
