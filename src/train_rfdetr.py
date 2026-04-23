@@ -315,7 +315,9 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None) 
         output_dir_base.mkdir(parents=True, exist_ok=True)
 
         pretrain_weights_path = str(output_dir_base / "rfdetr_with_ssl_backbone.pth")
-        torch.save(model.state_dict(), pretrain_weights_path)
+        # RFDETRSmall is a high-level wrapper, not nn.Module.
+        # The internal LightningModule is at model.model — same format as rf-detr-small.pth
+        torch.save(model.model.state_dict(), pretrain_weights_path)
         print(f"[SSL] Saved SSL-injected model to: {pretrain_weights_path}")
 
     # -------------------------------------------------------------------------
