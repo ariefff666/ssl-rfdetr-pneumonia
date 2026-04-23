@@ -286,13 +286,34 @@ class SSLDINOv2(nn.Module):
         print(f"[SSL] Backbone source: {backbone_source}")
 
     def _extract_cls(self, outputs) -> torch.Tensor:
-        """Aman mengekstrak CLS token dari berbagai bentuk output"""
+        """
+        Aman mengekstrak representasi global dari berbagai bentuk output.
+        Mendukung Feature Map spasial (GAP) maupun Sequence Token (CLS).
+        """
+        # 1. Jika objek HuggingFace asli
         if hasattr(outputs, "last_hidden_state"):
             return outputs.last_hidden_state[:, 0]
-        elif isinstance(outputs, (tuple, list)):
-            return outputs[0][:, 0]
+        
+        # 2. Jika tuple/list (seperti kebanyakan output backbone DETR)
+        # Ambil feature map dari level paling akhir (resolusi fitur terdalam)
+        if isinstance(outputs, (tuple, list)):
+            out = outputs[-1]
         else:
-            return outputs[:, 0]
+            out = outputs
+            
+        # 3. Kupas tipe data 'NestedTensor' bawaan RF-DETR jika ada
+        if hasattr(out, "tensors"):
+            out = out.tensors
+            
+        # 4. Standardisasi Bentuk ke [Batch, Channel]
+        if out.dim() == 4:
+            # Jika Spasial [B, C, H, W] -> Lakukan Global Average Pooling
+            return out.mean(dim=[2, 3])
+        elif out.dim() == 3:
+            # Jika Sequence [B, N, C] -> Ambil CLS token
+            return out[:, 0]
+            
+        return out
 
     def forward_student(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through student backbone + head."""
