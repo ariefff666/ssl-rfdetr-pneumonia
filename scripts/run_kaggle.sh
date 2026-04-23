@@ -92,6 +92,17 @@ pip install faster-coco-eval
 NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
 echo "Detected ${NUM_GPUS} GPU(s)"
 
+RESUME_CKPT="/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/last.ckpt"
+RESUME_FLAG=""
+
+if [ -f "$RESUME_CKPT" ]; then
+    echo "=> Checkpoint ditemukan di: $RESUME_CKPT"
+    echo "=> Melanjutkan (resume) training dari checkpoint..."
+    RESUME_FLAG="--resume ${RESUME_CKPT}"
+else
+    echo "=> Checkpoint resume tidak ditemukan, memulai training dari awal..."
+fi
+
 # Jalankan torchrun — train_rfdetr.py sekarang sudah handle dist.init_process_group()
 # secara benar sehingga barrier() berfungsi dan race condition tidak terjadi
 if [ "${NUM_GPUS}" -gt 1 ]; then
@@ -102,13 +113,15 @@ if [ "${NUM_GPUS}" -gt 1 ]; then
         src/train_rfdetr.py \
         --config configs/finetune_rfdetr.yaml \
         --ssl-backbone "${FINAL_BACKBONE}" \
-        --run-name rfdetr-finetune
+        --run-name rfdetr-finetune \
+        ${RESUME_FLAG}
 else
     echo "Using single GPU"
     python3 src/train_rfdetr.py \
         --config configs/finetune_rfdetr.yaml \
         --ssl-backbone "${FINAL_BACKBONE}" \
-        --run-name rfdetr-finetune
+        --run-name rfdetr-finetune \
+        ${RESUME_FLAG}
 fi
 
 # ==============================================================================
