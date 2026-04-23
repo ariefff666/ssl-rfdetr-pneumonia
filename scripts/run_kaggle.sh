@@ -58,6 +58,10 @@ echo "============================================================"
 echo "PHASE 1: Preparing COCO dataset from RSNA CSV"
 echo "============================================================"
 
+# Force rebuild COCO dataset to apply empty image filter (DDP fix)
+# Empty images cause uneven data distribution → NCCL deadlock
+rm -rf /kaggle/working/dataset_coco
+
 python3 src/data/prepare_coco.py --config configs/finetune_rfdetr.yaml
 
 # ==============================================================================
@@ -105,7 +109,6 @@ echo "============================================================"
 pip install faster-coco-eval
 
 # Check for resume checkpoint (if previous SSL run was interrupted)
-# RF-DETR saves: checkpoint.pth (training state) or last.ckpt (Lightning format)
 SSL_RESUME=""
 SSL_CKPT_DIR="/kaggle/working/checkpoints/rfdetr/rfdetr-finetune-ssl"
 SSL_RESUME_INPUT_PTH="/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/checkpoint.pth"
@@ -119,32 +122,16 @@ elif [ -f "${SSL_RESUME_INPUT_CKPT}" ]; then
     echo "Resuming from uploaded checkpoint: ${SSL_RESUME_INPUT_CKPT}"
 elif [ -f "${SSL_CKPT_DIR}/checkpoint.pth" ]; then
     SSL_RESUME="--resume ${SSL_CKPT_DIR}/checkpoint.pth"
-    echo "Resuming from local checkpoint: ${SSL_CKPT_DIR}/checkpoint.pth"
 elif [ -f "${SSL_CKPT_DIR}/last.ckpt" ]; then
     SSL_RESUME="--resume ${SSL_CKPT_DIR}/last.ckpt"
-    echo "Resuming from local checkpoint: ${SSL_CKPT_DIR}/last.ckpt"
 fi
 
-# Detect GPU count for DDP
-NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
-echo "Detected ${NUM_GPUS} GPU(s)"
-
-if [ "${NUM_GPUS}" -gt 1 ]; then
-    echo "Using DDP with ${NUM_GPUS} GPUs via torchrun"
-    torchrun --nproc_per_node=${NUM_GPUS} \
-        src/train_rfdetr.py \
-        --config configs/finetune_rfdetr.yaml \
-        --ssl-backbone "${FINAL_BACKBONE}" \
-        --run-name rfdetr-finetune \
-        ${SSL_RESUME}
-else
-    echo "Using single GPU"
-    python3 src/train_rfdetr.py \
-        --config configs/finetune_rfdetr.yaml \
-        --ssl-backbone "${FINAL_BACKBONE}" \
-        --run-name rfdetr-finetune \
-        ${SSL_RESUME}
-fi
+# DDP handled internally by Lightning (devices=2 in config)
+python3 src/train_rfdetr.py \
+    --config configs/finetune_rfdetr.yaml \
+    --ssl-backbone "${FINAL_BACKBONE}" \
+    --run-name rfdetr-finetune \
+    ${SSL_RESUME}
 
 # ==============================================================================
 # PHASE 3B: RF-DETR Fine-tuning WITHOUT SSL (Baseline)
@@ -154,16 +141,9 @@ echo "============================================================"
 echo "PHASE 3B: RF-DETR Fine-tuning (BASELINE — original DINOv2)"
 echo "============================================================"
 
-if [ "${NUM_GPUS}" -gt 1 ]; then
-    torchrun --nproc_per_node=${NUM_GPUS} \
-        src/train_rfdetr.py \
-        --config configs/finetune_rfdetr.yaml \
-        --run-name rfdetr-finetune
-else
-    python3 src/train_rfdetr.py \
-        --config configs/finetune_rfdetr.yaml \
-        --run-name rfdetr-finetune
-fi
+python3 src/train_rfdetr.py \
+    --config configs/finetune_rfdetr.yaml \
+    --run-name rfdetr-finetune
 
 # ==============================================================================
 # PHASE 4: Compare Results

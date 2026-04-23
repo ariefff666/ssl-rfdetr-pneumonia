@@ -49,6 +49,7 @@ def build_coco_annotation(
     image_dir: Path,
     output_dir: Path,
     split_name: str,
+    filter_empty: bool = False,
 ) -> None:
     """
     Build a COCO-format annotation JSON and copy images for one data split.
@@ -59,6 +60,7 @@ def build_coco_annotation(
         image_dir: Path to the source directory containing PNG images.
         output_dir: Root output directory (e.g., dataset_coco/).
         split_name: One of 'train', 'valid', 'test'.
+        filter_empty: If True, exclude images without annotations (fixes DDP deadlock).
     """
     split_dir = output_dir / split_name
     split_dir.mkdir(parents=True, exist_ok=True)
@@ -77,6 +79,7 @@ def build_coco_annotation(
     split_bboxes = bbox_df[bbox_df["patientId"].isin(patient_ids)]
 
     annotation_id = 1
+    skipped_empty = 0
 
     for img_idx, patient_id in enumerate(tqdm(patient_ids, desc=f"Building {split_name}")):
         # Locate source image — RSNA uses .dcm extension in folder name but they are
@@ -95,6 +98,16 @@ def build_coco_annotation(
             # Skip if image not found (could be in test set only)
             continue
 
+        # Check annotations for this patient
+        patient_boxes = split_bboxes[
+            (split_bboxes["patientId"] == patient_id) & (split_bboxes["Target"] == 1)
+        ]
+
+        # Skip empty images if filter is on (fixes DDP deadlock from uneven batches)
+        if filter_empty and len(patient_boxes) == 0:
+            skipped_empty += 1
+            continue
+
         # Copy image to split directory
         dst_file = split_dir / filename
         if not dst_file.exists():
@@ -107,23 +120,22 @@ def build_coco_annotation(
         # Get image dimensions — RSNA images are 1024x1024
         img_width, img_height = 1024, 1024
 
+        # Use sequential IDs to avoid gaps from filtered images
+        image_id = len(coco["images"]) + 1
+
         coco["images"].append({
-            "id": img_idx + 1,
+            "id": image_id,
             "file_name": filename,
             "width": img_width,
             "height": img_height,
         })
 
         # Add bounding box annotations for positive cases
-        patient_boxes = split_bboxes[
-            (split_bboxes["patientId"] == patient_id) & (split_bboxes["Target"] == 1)
-        ]
-
         for _, row in patient_boxes.iterrows():
             x, y, w, h = float(row["x"]), float(row["y"]), float(row["width"]), float(row["height"])
             coco["annotations"].append({
                 "id": annotation_id,
-                "image_id": img_idx + 1,
+                "image_id": image_id,
                 "category_id": 1,
                 "bbox": [x, y, w, h],  # COCO format: [x_min, y_min, width, height]
                 "area": w * h,
@@ -136,10 +148,11 @@ def build_coco_annotation(
     with open(ann_path, "w") as f:
         json.dump(coco, f, indent=2)
 
-    print(
-        f"  [{split_name}] {len(coco['images'])} images, "
-        f"{len(coco['annotations'])} annotations → {ann_path}"
-    )
+    msg = (f"  [{split_name}] {len(coco['images'])} images, "
+           f"{len(coco['annotations'])} annotations → {ann_path}")
+    if skipped_empty > 0:
+        msg += f" (filtered {skipped_empty} empty images for DDP)"
+    print(msg)
 
 
 def main(config_path: str, data_fraction_override: float | None = None,
@@ -228,13 +241,12 @@ def main(config_path: str, data_fraction_override: float | None = None,
     test_records = [{"patientId": pid} for pid in test_ids]
 
     # Build COCO annotations for each split
+    # filter_empty=True for train: removes images without annotations (DDP fix)
+    # filter_empty=False for valid/test: keep all images for fair evaluation
     print("\nBuilding COCO dataset...")
-    for split_name, records in [
-        ("train", train_records),
-        ("valid", valid_records),
-        ("test", test_records),
-    ]:
-        build_coco_annotation(records, labels_df, image_dir, output_dir, split_name)
+    build_coco_annotation(train_records, labels_df, image_dir, output_dir, "train", filter_empty=True)
+    build_coco_annotation(valid_records, labels_df, image_dir, output_dir, "valid", filter_empty=False)
+    build_coco_annotation(test_records, labels_df, image_dir, output_dir, "test", filter_empty=False)
 
     print(f"\nDone! COCO dataset saved to: {output_dir}")
     print("You can now use this directory with RF-DETR's model.train(dataset_dir=...)")
