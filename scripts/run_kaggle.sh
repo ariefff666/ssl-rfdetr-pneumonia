@@ -108,30 +108,15 @@ echo "============================================================"
 
 pip install faster-coco-eval
 
-# Check for resume checkpoint (if previous SSL run was interrupted)
-SSL_RESUME=""
-SSL_CKPT_DIR="/kaggle/working/checkpoints/rfdetr/rfdetr-finetune-ssl"
-SSL_RESUME_INPUT_PTH="/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/checkpoint.pth"
-SSL_RESUME_INPUT_CKPT="/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/last.ckpt"
-
-if [ -f "${SSL_RESUME_INPUT_PTH}" ]; then
-    SSL_RESUME="--resume ${SSL_RESUME_INPUT_PTH}"
-    echo "Resuming from uploaded checkpoint: ${SSL_RESUME_INPUT_PTH}"
-elif [ -f "${SSL_RESUME_INPUT_CKPT}" ]; then
-    SSL_RESUME="--resume ${SSL_RESUME_INPUT_CKPT}"
-    echo "Resuming from uploaded checkpoint: ${SSL_RESUME_INPUT_CKPT}"
-elif [ -f "${SSL_CKPT_DIR}/checkpoint.pth" ]; then
-    SSL_RESUME="--resume ${SSL_CKPT_DIR}/checkpoint.pth"
-elif [ -f "${SSL_CKPT_DIR}/last.ckpt" ]; then
-    SSL_RESUME="--resume ${SSL_CKPT_DIR}/last.ckpt"
-fi
+# NOTE: Resume disabled — dataset was rebuilt with empty image filter.
+# To re-enable resume, uncomment below and upload checkpoint as Kaggle dataset.
+# SSL_RESUME="--resume /kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/last.ckpt"
 
 # DDP handled internally by Lightning (devices=2 in config)
 python3 src/train_rfdetr.py \
     --config configs/finetune_rfdetr.yaml \
     --ssl-backbone "${FINAL_BACKBONE}" \
-    --run-name rfdetr-finetune \
-    ${SSL_RESUME}
+    --run-name rfdetr-finetune
 
 # ==============================================================================
 # PHASE 3B: RF-DETR Fine-tuning WITHOUT SSL (Baseline)
