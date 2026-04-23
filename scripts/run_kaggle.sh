@@ -18,6 +18,11 @@
 
 set -e  # Exit on error
 
+# --- NCCL Fix for Multi-GPU on Kaggle T4x2 ---
+# Disable P2P to prevent NCCL deadlock/timeout
+export NCCL_P2P_DISABLE=1
+export NCCL_IB_DISABLE=1
+
 # --- Environment Setup ---
 echo "============================================================"
 echo "Pipeline Start: $(date)"
