@@ -25,7 +25,8 @@ training:
   batch_size: 8                   # Per-GPU; with grad_accum=4 → effective batch = 16
   grad_accum_steps: 2
   # NOTE: 'devices' not set here — DDP handled externally by torchrun
-  learning_rate: 0.0001
+  learning_rate: 0.0001            # LR for detection head (decoder)
+  lr_encoder: 0.00001              # LR for backbone — 10x lower to preserve SSL features
   weight_decay: 0.0001
   resume_from: null                # Path to checkpoint.pth to resume training from
 

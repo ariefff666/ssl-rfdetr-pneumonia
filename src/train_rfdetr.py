@@ -477,7 +477,7 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
         "device": local_rank,
         "num_workers": 2,       
         "pin_memory": True,
-        "check_val_every_n_epoch": 5     
+        "check_val_every_n_epoch": 1     
     }
 
     # Resume takes priority: loads model + optimizer + scheduler + epoch
@@ -490,6 +490,10 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
     # Optional LR
     if "learning_rate" in train_cfg:
         train_kwargs["lr"] = train_cfg["learning_rate"]
+    
+    # Separate (lower) LR for backbone/encoder to preserve pretrained features
+    if "lr_encoder" in train_cfg:
+        train_kwargs["lr_encoder"] = train_cfg["lr_encoder"]
 
     # W&B integration (Berikan argumen ini ke SEMUA rank untuk mencegah deadlock)
     if log_cfg.get("use_wandb"):
