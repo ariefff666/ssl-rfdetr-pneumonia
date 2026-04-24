@@ -67,7 +67,7 @@ echo "============================================================"
 rm -rf /root/.cache/torch/hub/
 python3 -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
 
-BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbone/backbone_epoch_50.pth"
+BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbonep16/backbone_epoch_50 (p16).pth"
 
 if [ -f "$BACKBONE_INPUT_PATH" ]; then
     echo "=> Backbone sudah ditemukan di: $BACKBONE_INPUT_PATH"
@@ -78,7 +78,7 @@ else
     
     torchrun --nproc_per_node=2 src/train_ssl.py --config configs/ssl_pretrain.yaml
     if [ $? -ne 0 ]; then echo "Error di Phase 2!"; exit 1; fi
-    FINAL_BACKBONE="/kaggle/working/ssl-rfdetr-pneumonia/checkpoints/ssl/backbone_epoch_50.pth"
+    FINAL_BACKBONE="/kaggle/working/checkpoints/ssl/backbone_epoch_50.pth"
 fi
 
 # ==============================================================================
