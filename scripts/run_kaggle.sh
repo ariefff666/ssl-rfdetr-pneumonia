@@ -133,28 +133,39 @@ echo "PHASE 2A: RF-DETR Fine-tune — SSL backbone (${FRAC_PCT}%)"
 echo "============================================================"
 
 # Cek resume checkpoint untuk SSL
-SSL_RESUME_FLAG=""
 if [ -f "${SSL_RESUME_CKPT}" ]; then
     echo "=> RESUME: last.ckpt ditemukan di ${SSL_RESUME_CKPT}"
     echo "=> Melanjutkan training SSL dari checkpoint..."
-    SSL_RESUME_FLAG="--resume ${SSL_RESUME_CKPT}"
+
+    if [ "${NUM_GPUS}" -gt 1 ]; then
+        torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
+            src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --ssl-backbone "${FINAL_BACKBONE}" \
+            --run-name "${SSL_RUN_NAME}" \
+            --resume "${SSL_RESUME_CKPT}"
+    else
+        python3 src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --ssl-backbone "${FINAL_BACKBONE}" \
+            --run-name "${SSL_RUN_NAME}" \
+            --resume "${SSL_RESUME_CKPT}"
+    fi
 else
     echo "=> Checkpoint SSL tidak ditemukan. Training dari AWAL dengan SSL backbone."
-fi
 
-if [ "${NUM_GPUS}" -gt 1 ]; then
-    torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
-        src/train_rfdetr.py \
-        --config "${TEMP_CONFIG}" \
-        --ssl-backbone "${FINAL_BACKBONE}" \
-        --run-name "${SSL_RUN_NAME}" \
-        ${SSL_RESUME_FLAG}
-else
-    python3 src/train_rfdetr.py \
-        --config "${TEMP_CONFIG}" \
-        --ssl-backbone "${FINAL_BACKBONE}" \
-        --run-name "${SSL_RUN_NAME}" \
-        ${SSL_RESUME_FLAG}
+    if [ "${NUM_GPUS}" -gt 1 ]; then
+        torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
+            src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --ssl-backbone "${FINAL_BACKBONE}" \
+            --run-name "${SSL_RUN_NAME}"
+    else
+        python3 src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --ssl-backbone "${FINAL_BACKBONE}" \
+            --run-name "${SSL_RUN_NAME}"
+    fi
 fi
 
 # ==============================================================================
@@ -166,26 +177,35 @@ echo "PHASE 2B: RF-DETR Fine-tune — Baseline (${FRAC_PCT}%)"
 echo "============================================================"
 
 # Cek resume checkpoint untuk Baseline
-BASELINE_RESUME_FLAG=""
 if [ -f "${BASELINE_RESUME_CKPT}" ]; then
     echo "=> RESUME: last.ckpt ditemukan di ${BASELINE_RESUME_CKPT}"
     echo "=> Melanjutkan training Baseline dari checkpoint..."
-    BASELINE_RESUME_FLAG="--resume ${BASELINE_RESUME_CKPT}"
+
+    if [ "${NUM_GPUS}" -gt 1 ]; then
+        torchrun --nproc_per_node=${NUM_GPUS} --master_port=29501 \
+            src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --run-name "${BASELINE_RUN_NAME}" \
+            --resume "${BASELINE_RESUME_CKPT}"
+    else
+        python3 src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --run-name "${BASELINE_RUN_NAME}" \
+            --resume "${BASELINE_RESUME_CKPT}"
+    fi
 else
     echo "=> Checkpoint Baseline tidak ditemukan. Training dari AWAL (original DINOv2)."
-fi
 
-if [ "${NUM_GPUS}" -gt 1 ]; then
-    torchrun --nproc_per_node=${NUM_GPUS} --master_port=29501 \
-        src/train_rfdetr.py \
-        --config "${TEMP_CONFIG}" \
-        --run-name "${BASELINE_RUN_NAME}" \
-        ${BASELINE_RESUME_FLAG}
-else
-    python3 src/train_rfdetr.py \
-        --config "${TEMP_CONFIG}" \
-        --run-name "${BASELINE_RUN_NAME}" \
-        ${BASELINE_RESUME_FLAG}
+    if [ "${NUM_GPUS}" -gt 1 ]; then
+        torchrun --nproc_per_node=${NUM_GPUS} --master_port=29501 \
+            src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --run-name "${BASELINE_RUN_NAME}"
+    else
+        python3 src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --run-name "${BASELINE_RUN_NAME}"
+    fi
 fi
 
 # ==============================================================================
