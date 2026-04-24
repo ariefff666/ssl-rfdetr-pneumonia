@@ -477,7 +477,7 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
         "device": local_rank,
         "num_workers": 2,       
         "pin_memory": True,
-        "check_val_every_n_epoch": 1     
+        "check_val_every_n_epoch": 5     
     }
 
     # Resume takes priority: loads model + optimizer + scheduler + epoch
