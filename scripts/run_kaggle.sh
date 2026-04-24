@@ -1,168 +1,156 @@
 #!/bin/bash
 # ==============================================================================
-# run_kaggle.sh — Execute training pipeline on Kaggle with background support
+# run_kaggle.sh — Run SSL + Baseline experiments for one data fraction
 #
-# This script is designed to be run inside a Kaggle notebook terminal.
-# It handles the full 3-phase pipeline:
-#   Phase 1: Data preparation (RSNA CSV → COCO JSON)
-#   Phase 2: SSL continual pre-training (DINOv2 on X-rays)
-#   Phase 3: RF-DETR fine-tuning (SSL + Baseline)
+# Usage:
+#   bash scripts/run_kaggle.sh 0.1     # Run 10% fraction
+#   bash scripts/run_kaggle.sh 0.25    # Run 25% fraction
+#   bash scripts/run_kaggle.sh 0.5     # Run 50% fraction
+#   bash scripts/run_kaggle.sh 1.0     # Run 100% fraction
 #
-# Usage (from Kaggle notebook cell):
-#   !bash scripts/run_kaggle.sh
-#
-# To run in background (persists after browser close):
-#   !nohup bash scripts/run_kaggle.sh > /kaggle/working/pipeline.log 2>&1 &
-#   !echo $!  # Print the process ID for monitoring
+# Background:
+#   nohup bash scripts/run_kaggle.sh 0.1 > /kaggle/working/pipeline.log 2>&1 &
 # ==============================================================================
 
-set -e  # Exit on error
+set -e
 
-# --- NCCL Fix for Multi-GPU on Kaggle T4x2 ---
+# --- Parse fraction argument ---
+FRACTION="${1:-0.1}"
+FRAC_PCT=$(python3 -c "print(int(float('${FRACTION}') * 100))")
+echo "============================================================"
+echo "Pipeline: Fraction ${FRAC_PCT}% — $(date)"
+echo "============================================================"
+
+# --- NCCL Fix ---
 export NCCL_P2P_DISABLE=1
 export NCCL_IB_DISABLE=1
 
-# --- Environment Setup ---
-echo "============================================================"
-echo "Pipeline Start: $(date)"
-echo "============================================================"
+# --- Setup ---
+pip install -q rfdetr albumentations wandb pycocotools scikit-learn tqdm pyyaml seaborn faster-coco-eval
 
-# Install dependencies
-pip install -q rfdetr albumentations wandb pycocotools scikit-learn tqdm pyyaml seaborn
-
-# Navigate to project root and set Python path
 cd /kaggle/working/ssl-rfdetr-pneumonia
 export PYTHONPATH="/kaggle/working/ssl-rfdetr-pneumonia:$PYTHONPATH"
 
-# Ensure all package directories
 mkdir -p src/data src/models src/utils
 touch src/__init__.py src/data/__init__.py src/models/__init__.py src/utils/__init__.py
 
-echo "--- Verifying package structure ---"
-find src -name "*.py" | head -20
-echo "-----------------------------------"
-
-# ==============================================================================
-# PHASE 1: Data Preparation
-# ==============================================================================
-echo ""
-echo "============================================================"
-echo "PHASE 1: Preparing COCO dataset from RSNA CSV"
-echo "============================================================"
-
-# Force rebuild COCO dataset
-rm -rf /kaggle/working/dataset_coco
-
-python3 src/data/prepare_coco.py --config configs/finetune_rfdetr.yaml
-
-# ==============================================================================
-# PHASE 2: SSL Continual Pre-training
-# ==============================================================================
-echo ""
-echo "============================================================"
-echo "PHASE 2: DINOv2 SSL Continual Pre-training"
-echo "============================================================"
-
-# Hapus cache lama agar tidak konflik
+# Hapus cache dinov2 agar tidak konflik
 rm -rf /root/.cache/torch/hub/
 python3 -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
 
-BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbonep16/backbone_epoch_50 (p16).pth"
-
-if [ -f "$BACKBONE_INPUT_PATH" ]; then
-    echo "=> Backbone sudah ditemukan di: $BACKBONE_INPUT_PATH"
-    echo "=> Melewati Phase 2 dan langsung menuju Phase 3..."
-    FINAL_BACKBONE="$BACKBONE_INPUT_PATH"
-else
-    echo "=> Backbone tidak ditemukan. Memulai Phase 2 dari awal/resume..."
-    
-    torchrun --nproc_per_node=2 src/train_ssl.py --config configs/ssl_pretrain.yaml
-    if [ $? -ne 0 ]; then echo "Error di Phase 2!"; exit 1; fi
-    FINAL_BACKBONE="/kaggle/working/checkpoints/ssl/backbone_epoch_50.pth"
-fi
-
-# ==============================================================================
-# PHASE 3A: RF-DETR Fine-tuning WITH SSL backbone
-# ==============================================================================
-echo ""
-echo "============================================================"
-echo "PHASE 3A: RF-DETR Fine-tuning (WITH SSL backbone)"
-echo "============================================================"
-
-pip install faster-coco-eval
-
-# Detect GPU count
+# --- GPU Detection ---
 NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
-echo "Detected ${NUM_GPUS} GPU(s)"
+echo "Detected ${NUM_GPUS} GPU(s), Fraction=${FRAC_PCT}%"
 
-RESUME_CKPT="/kaggle/input/datasets/arief666/rfdetr-ssl-checkpoint/last.ckpt"
-RESUME_FLAG=""
+# --- Backbone ---
+BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbonep16/backbone_epoch_50 (p16).pth"
+if [ ! -f "$BACKBONE_INPUT_PATH" ]; then
+    echo "ERROR: Backbone not found at $BACKBONE_INPUT_PATH"
+    exit 1
+fi
+FINAL_BACKBONE="$BACKBONE_INPUT_PATH"
 
-if [ -f "$RESUME_CKPT" ]; then
-    echo "=> Checkpoint ditemukan di: $RESUME_CKPT"
-    echo "=> Melanjutkan (resume) training dari checkpoint..."
-    RESUME_FLAG="--resume ${RESUME_CKPT}"
+# --- Dataset dir per fraction ---
+if [ "$FRAC_PCT" -eq 100 ]; then
+    DATASET_DIR="/kaggle/working/dataset_coco"
 else
-    echo "=> Checkpoint resume tidak ditemukan, memulai training dari awal..."
+    DATASET_DIR="/kaggle/working/dataset_coco_frac${FRAC_PCT}"
 fi
 
-# Jalankan torchrun — train_rfdetr.py sekarang sudah handle dist.init_process_group()
-# secara benar sehingga barrier() berfungsi dan race condition tidak terjadi
+# ==============================================================================
+# PHASE 1: Prepare COCO dataset for this fraction
+# ==============================================================================
+echo ""
+echo "============================================================"
+echo "PHASE 1: Preparing COCO dataset (${FRAC_PCT}% fraction)"
+echo "============================================================"
+
+rm -rf "${DATASET_DIR}"
+
+# Create a temporary config with the desired fraction
+TEMP_CONFIG="/tmp/finetune_frac${FRAC_PCT}.yaml"
+python3 -c "
+import yaml
+with open('configs/finetune_rfdetr.yaml') as f:
+    cfg = yaml.safe_load(f)
+cfg['data']['data_fraction'] = ${FRACTION}
+cfg['data']['dataset_dir'] = '${DATASET_DIR}'
+with open('${TEMP_CONFIG}', 'w') as f:
+    yaml.dump(cfg, f)
+print('Config written to ${TEMP_CONFIG}')
+print(f'  data_fraction: {cfg[\"data\"][\"data_fraction\"]}')
+print(f'  dataset_dir: {cfg[\"data\"][\"dataset_dir\"]}')
+"
+
+python3 src/data/prepare_coco.py --config "${TEMP_CONFIG}"
+
+# ==============================================================================
+# PHASE 2: Train SSL model (WITH SSL backbone)
+# ==============================================================================
+echo ""
+echo "============================================================"
+echo "PHASE 2A: RF-DETR Fine-tune — SSL backbone (${FRAC_PCT}%)"
+echo "============================================================"
+
+SSL_RUN_NAME="rfdetr-frac${FRAC_PCT}"
+
 if [ "${NUM_GPUS}" -gt 1 ]; then
-    echo "Using DDP with ${NUM_GPUS} GPUs via torchrun"
-    torchrun \
-        --nproc_per_node=${NUM_GPUS} \
-        --master_port=29500 \
+    torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
         src/train_rfdetr.py \
-        --config configs/finetune_rfdetr.yaml \
+        --config "${TEMP_CONFIG}" \
         --ssl-backbone "${FINAL_BACKBONE}" \
-        --run-name rfdetr-finetune \
-        ${RESUME_FLAG}
+        --run-name "${SSL_RUN_NAME}"
 else
-    echo "Using single GPU"
     python3 src/train_rfdetr.py \
-        --config configs/finetune_rfdetr.yaml \
+        --config "${TEMP_CONFIG}" \
         --ssl-backbone "${FINAL_BACKBONE}" \
-        --run-name rfdetr-finetune \
-        ${RESUME_FLAG}
+        --run-name "${SSL_RUN_NAME}"
 fi
 
 # ==============================================================================
-# PHASE 3B: RF-DETR Fine-tuning WITHOUT SSL (Baseline)
+# PHASE 3: Train Baseline model (WITHOUT SSL backbone)
 # ==============================================================================
 echo ""
 echo "============================================================"
-echo "PHASE 3B: RF-DETR Fine-tuning (BASELINE — original DINOv2)"
+echo "PHASE 2B: RF-DETR Fine-tune — Baseline (${FRAC_PCT}%)"
 echo "============================================================"
+
+BASELINE_RUN_NAME="rfdetr-frac${FRAC_PCT}"
 
 if [ "${NUM_GPUS}" -gt 1 ]; then
-    torchrun \
-        --nproc_per_node=${NUM_GPUS} \
-        --master_port=29501 \
+    torchrun --nproc_per_node=${NUM_GPUS} --master_port=29501 \
         src/train_rfdetr.py \
-        --config configs/finetune_rfdetr.yaml \
-        --run-name rfdetr-finetune
+        --config "${TEMP_CONFIG}" \
+        --run-name "${BASELINE_RUN_NAME}"
 else
     python3 src/train_rfdetr.py \
-        --config configs/finetune_rfdetr.yaml \
-        --run-name rfdetr-finetune
+        --config "${TEMP_CONFIG}" \
+        --run-name "${BASELINE_RUN_NAME}"
 fi
 
 # ==============================================================================
-# PHASE 4: Compare Results
+# PHASE 4: Visualization & Comparison
 # ==============================================================================
 echo ""
 echo "============================================================"
-echo "PHASE 4: Comparing SSL vs Baseline results"
+echo "PHASE 3: Generating Visualizations (${FRAC_PCT}%)"
 echo "============================================================"
 
-python3 src/compare_results.py \
-    --ssl-dir /kaggle/working/checkpoints/rfdetr/rfdetr-finetune-ssl \
-    --baseline-dir /kaggle/working/checkpoints/rfdetr/rfdetr-finetune-baseline \
-    --output-dir /kaggle/working/comparison
+SSL_DIR="/kaggle/working/checkpoints/rfdetr/${SSL_RUN_NAME}-ssl"
+BASELINE_DIR="/kaggle/working/checkpoints/rfdetr/${BASELINE_RUN_NAME}-baseline"
+VIZ_DIR="/kaggle/working/visualizations/frac${FRAC_PCT}"
+
+python3 src/visualize.py \
+    --dataset-dir "${DATASET_DIR}" \
+    --ssl-dir "${SSL_DIR}" \
+    --baseline-dir "${BASELINE_DIR}" \
+    --output-dir "${VIZ_DIR}" \
+    --fraction ${FRAC_PCT}
 
 echo ""
 echo "============================================================"
-echo "Pipeline Complete: $(date)"
-echo "Results at: /kaggle/working/comparison/"
+echo "DONE: Fraction ${FRAC_PCT}% — $(date)"
+echo "  SSL checkpoints:      ${SSL_DIR}"
+echo "  Baseline checkpoints:  ${BASELINE_DIR}"
+echo "  Visualizations:        ${VIZ_DIR}"
 echo "============================================================"
