@@ -475,8 +475,9 @@ def main(config_path: str, ssl_backbone_path: str | None, run_name: str | None,
         "grad_accum_steps": train_cfg["grad_accum_steps"],
         "output_dir": str(output_dir),
         "device": local_rank,
-        "num_workers": 2,       
+        "num_workers": 4,       
         "pin_memory": True,
+        "prefetch_factor": 4,
         "check_val_every_n_epoch": 5     
     }
 
