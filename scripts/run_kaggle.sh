@@ -2,16 +2,13 @@
 # ==============================================================================
 # run_kaggle.sh — Run SSL + Baseline experiments for one data fraction
 #
-# Features:
-#   - Auto-resume: detects last.ckpt and resumes training if found
-#   - Skips completed runs (if best checkpoint already exists)
-#   - Runs both SSL + Baseline sequentially, then generates visualizations
+# Auto-resume: Jika file last.ckpt ditemukan di Kaggle input dataset,
+# training akan dilanjutkan dari checkpoint tersebut.
+# Jika tidak ditemukan, training dimulai dari awal.
 #
 # Usage:
 #   bash scripts/run_kaggle.sh 0.1     # Run 10% fraction
 #   bash scripts/run_kaggle.sh 0.25    # Run 25% fraction
-#   bash scripts/run_kaggle.sh 0.5     # Run 50% fraction
-#   bash scripts/run_kaggle.sh 1.0     # Run 100% fraction
 #
 # Background:
 #   nohup bash scripts/run_kaggle.sh 0.1 > /kaggle/working/pipeline.log 2>&1 &
@@ -47,10 +44,24 @@ python3 -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits
 NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
 echo "Detected ${NUM_GPUS} GPU(s), Fraction=${FRAC_PCT}%"
 
-# --- Backbone ---
+# ==============================================================================
+# INPUT PATHS — Sesuaikan path ini dengan dataset Kaggle kamu
+# ==============================================================================
+
+# SSL Backbone (dari Phase 2 SSL pre-training)
 BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbonep16/backbone_epoch_50 (p16).pth"
+
+# Resume checkpoints (dari Kaggle input datasets)
+# Upload last.ckpt ke dataset terpisah di Kaggle, lalu isi path di sini.
+# Jika tidak ada / belum di-upload, biarkan path ini — script akan auto-detect.
+SSL_RESUME_CKPT="/kaggle/input/datasets/arief666/rfdetr-checkpoint-ssl-frac10/last (ssl_frac10).ckpt"
+BASELINE_RESUME_CKPT="/kaggle/input/datasets/arief666/rfdetr-checkpoint-baseline-frac10/last (baseline_frac10).ckpt"
+
+# ==============================================================================
+# Verifikasi backbone
+# ==============================================================================
 if [ ! -f "$BACKBONE_INPUT_PATH" ]; then
-    echo "ERROR: Backbone not found at $BACKBONE_INPUT_PATH"
+    echo "ERROR: SSL Backbone not found at $BACKBONE_INPUT_PATH"
     exit 1
 fi
 FINAL_BACKBONE="$BACKBONE_INPUT_PATH"
@@ -100,7 +111,7 @@ print(f'  dataset_dir: {cfg[\"data\"][\"dataset_dir\"]}')
     python3 src/data/prepare_coco.py --config "${TEMP_CONFIG}"
 fi
 
-# Pastikan config selalu ada (meski dataset di-skip)
+# Pastikan config selalu ada
 if [ ! -f "${TEMP_CONFIG}" ]; then
     python3 -c "
 import yaml
@@ -114,59 +125,6 @@ with open('${TEMP_CONFIG}', 'w') as f:
 fi
 
 # ==============================================================================
-# Helper function: run training with auto-resume
-# ==============================================================================
-run_train() {
-    local MODE="$1"          # "ssl" atau "baseline"
-    local RUN_NAME="$2"
-    local OUTPUT_DIR="$3"
-    local EXTRA_ARGS="$4"    # e.g., --ssl-backbone path
-
-    echo ""
-    echo "------------------------------------------------------------"
-    echo "  Mode: ${MODE} | Run: ${RUN_NAME}"
-    echo "------------------------------------------------------------"
-
-    # Check: apakah training sudah selesai? (best checkpoint exists + no last.ckpt)
-    if [ -f "${OUTPUT_DIR}/checkpoint_best_regular.pth" ] && [ ! -f "${OUTPUT_DIR}/last.ckpt" ]; then
-        echo "=> Training ${MODE} sudah SELESAI (best checkpoint ditemukan, no last.ckpt)."
-        echo "=> Skip training. Checkpoint di: ${OUTPUT_DIR}"
-        return 0
-    fi
-
-    # Check: ada last.ckpt? → resume
-    RESUME_FLAG=""
-    if [ -f "${OUTPUT_DIR}/last.ckpt" ]; then
-        echo "=> last.ckpt DITEMUKAN di ${OUTPUT_DIR}/last.ckpt"
-        echo "=> Melanjutkan (RESUME) training dari checkpoint..."
-        RESUME_FLAG="--resume ${OUTPUT_DIR}/last.ckpt"
-    else
-        echo "=> Tidak ada checkpoint. Memulai training dari AWAL..."
-    fi
-
-    if [ "${NUM_GPUS}" -gt 1 ]; then
-        # Gunakan port berbeda untuk SSL vs Baseline agar tidak konflik
-        local PORT=29500
-        if [ "${MODE}" = "baseline" ]; then
-            PORT=29501
-        fi
-
-        torchrun --nproc_per_node=${NUM_GPUS} --master_port=${PORT} \
-            src/train_rfdetr.py \
-            --config "${TEMP_CONFIG}" \
-            --run-name "${RUN_NAME}" \
-            ${EXTRA_ARGS} \
-            ${RESUME_FLAG}
-    else
-        python3 src/train_rfdetr.py \
-            --config "${TEMP_CONFIG}" \
-            --run-name "${RUN_NAME}" \
-            ${EXTRA_ARGS} \
-            ${RESUME_FLAG}
-    fi
-}
-
-# ==============================================================================
 # PHASE 2A: RF-DETR Fine-tune — SSL backbone
 # ==============================================================================
 echo ""
@@ -174,7 +132,30 @@ echo "============================================================"
 echo "PHASE 2A: RF-DETR Fine-tune — SSL backbone (${FRAC_PCT}%)"
 echo "============================================================"
 
-run_train "ssl" "${SSL_RUN_NAME}" "${SSL_DIR}" "--ssl-backbone \"${FINAL_BACKBONE}\""
+# Cek resume checkpoint untuk SSL
+SSL_RESUME_FLAG=""
+if [ -f "${SSL_RESUME_CKPT}" ]; then
+    echo "=> RESUME: last.ckpt ditemukan di ${SSL_RESUME_CKPT}"
+    echo "=> Melanjutkan training SSL dari checkpoint..."
+    SSL_RESUME_FLAG="--resume ${SSL_RESUME_CKPT}"
+else
+    echo "=> Checkpoint SSL tidak ditemukan. Training dari AWAL dengan SSL backbone."
+fi
+
+if [ "${NUM_GPUS}" -gt 1 ]; then
+    torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
+        src/train_rfdetr.py \
+        --config "${TEMP_CONFIG}" \
+        --ssl-backbone "${FINAL_BACKBONE}" \
+        --run-name "${SSL_RUN_NAME}" \
+        ${SSL_RESUME_FLAG}
+else
+    python3 src/train_rfdetr.py \
+        --config "${TEMP_CONFIG}" \
+        --ssl-backbone "${FINAL_BACKBONE}" \
+        --run-name "${SSL_RUN_NAME}" \
+        ${SSL_RESUME_FLAG}
+fi
 
 # ==============================================================================
 # PHASE 2B: RF-DETR Fine-tune — Baseline
@@ -184,7 +165,28 @@ echo "============================================================"
 echo "PHASE 2B: RF-DETR Fine-tune — Baseline (${FRAC_PCT}%)"
 echo "============================================================"
 
-run_train "baseline" "${BASELINE_RUN_NAME}" "${BASELINE_DIR}" ""
+# Cek resume checkpoint untuk Baseline
+BASELINE_RESUME_FLAG=""
+if [ -f "${BASELINE_RESUME_CKPT}" ]; then
+    echo "=> RESUME: last.ckpt ditemukan di ${BASELINE_RESUME_CKPT}"
+    echo "=> Melanjutkan training Baseline dari checkpoint..."
+    BASELINE_RESUME_FLAG="--resume ${BASELINE_RESUME_CKPT}"
+else
+    echo "=> Checkpoint Baseline tidak ditemukan. Training dari AWAL (original DINOv2)."
+fi
+
+if [ "${NUM_GPUS}" -gt 1 ]; then
+    torchrun --nproc_per_node=${NUM_GPUS} --master_port=29501 \
+        src/train_rfdetr.py \
+        --config "${TEMP_CONFIG}" \
+        --run-name "${BASELINE_RUN_NAME}" \
+        ${BASELINE_RESUME_FLAG}
+else
+    python3 src/train_rfdetr.py \
+        --config "${TEMP_CONFIG}" \
+        --run-name "${BASELINE_RUN_NAME}" \
+        ${BASELINE_RESUME_FLAG}
+fi
 
 # ==============================================================================
 # PHASE 3: Visualization & Comparison
