@@ -178,7 +178,8 @@ def visualize_detections(dataset_dir: str, model_dir: str, model_name: str,
                     new_k = k.replace("model.", "", 1) if k.startswith("model.") else k
                     sd[new_k] = v
                 tmp_pth = Path(model_dir) / "_temp_weights.pth"
-                torch.save(sd, tmp_pth)
+                # RF-DETR expects checkpoint['model'] format
+                torch.save({"model": sd}, tmp_pth)
                 load_path = str(tmp_pth)
                 print(f"  [Viz] Converted .ckpt → .pth from: {ckpt.name}")
 
