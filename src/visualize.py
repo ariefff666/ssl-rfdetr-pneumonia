@@ -146,12 +146,19 @@ def visualize_detections(dataset_dir: str, model_dir: str, model_name: str,
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Find best checkpoint
+    # Find best checkpoint (try ema first, then regular, then last.ckpt)
     ckpt_ema = Path(model_dir) / "checkpoint_best_ema.pth"
     ckpt_reg = Path(model_dir) / "checkpoint_best_regular.pth"
-    ckpt = ckpt_ema if ckpt_ema.exists() else ckpt_reg
+    ckpt_total = Path(model_dir) / "checkpoint_best_total.pth"
+    ckpt_last = Path(model_dir) / "last.ckpt"
 
-    if not ckpt.exists():
+    ckpt = None
+    for c in [ckpt_ema, ckpt_reg, ckpt_total, ckpt_last]:
+        if c.exists():
+            ckpt = c
+            break
+
+    if ckpt is None:
         print(f"  [Skip] No checkpoint found in {model_dir}")
         return
 
