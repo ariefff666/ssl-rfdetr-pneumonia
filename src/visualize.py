@@ -159,8 +159,7 @@ def visualize_detections(dataset_dir: str, model_dir: str, model_name: str,
         import torch
         from rfdetr import RFDETRSmall
 
-        model = RFDETRSmall()
-        model.load(str(ckpt))
+        model = RFDETRSmall(pretrain_weights=str(ckpt))
         print(f"  [Viz] Loaded model from: {ckpt}")
     except Exception as e:
         print(f"  [Skip] Could not load model: {e}")
@@ -501,6 +500,225 @@ def print_summary_table(ssl_dir: str, baseline_dir: str, fraction: int,
 
 
 # ============================================================================
+# 6. Data Distribution Chart
+# ============================================================================
+def visualize_data_distribution(dataset_dir: str, fraction: int,
+                                output_dir: str) -> None:
+    """Visualize positive/negative sample distribution in train/val/test."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    splits = ["train", "valid", "test"]
+    pos_counts = []
+    neg_counts = []
+    total_counts = []
+
+    for split in splits:
+        ann_path = Path(dataset_dir) / split / "_annotations.coco.json"
+        if not ann_path.exists():
+            pos_counts.append(0); neg_counts.append(0); total_counts.append(0)
+            continue
+        with open(ann_path) as f:
+            coco = json.load(f)
+        img_ids_with_ann = set(a["image_id"] for a in coco["annotations"])
+        total = len(coco["images"])
+        pos = len(img_ids_with_ann)
+        neg = total - pos
+        pos_counts.append(pos)
+        neg_counts.append(neg)
+        total_counts.append(total)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig.suptitle(f"Dataset Distribution — {fraction}% Fraction",
+                 fontsize=16, fontweight="bold")
+
+    # Stacked bar
+    x = np.arange(len(splits))
+    axes[0].bar(x, pos_counts, color="#E53935", alpha=0.9, label="Pneumonia (+)")
+    axes[0].bar(x, neg_counts, bottom=pos_counts, color="#43A047", alpha=0.9, label="Normal (−)")
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels([s.capitalize() for s in splits], fontsize=12)
+    axes[0].set_ylabel("Number of Images", fontsize=12)
+    axes[0].set_title("Sample Counts", fontsize=13)
+    axes[0].legend(fontsize=11)
+    for i, (p, n) in enumerate(zip(pos_counts, neg_counts)):
+        axes[0].text(i, p/2, str(p), ha="center", va="center", fontweight="bold", color="white")
+        axes[0].text(i, p + n/2, str(n), ha="center", va="center", fontweight="bold", color="white")
+    axes[0].grid(axis="y", alpha=0.2)
+
+    # Pie chart for train split
+    if pos_counts[0] + neg_counts[0] > 0:
+        sizes = [pos_counts[0], neg_counts[0]]
+        labels = [f"Pneumonia\n({pos_counts[0]})", f"Normal\n({neg_counts[0]})"]
+        colors = ["#E53935", "#43A047"]
+        axes[1].pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%",
+                    startangle=90, textprops={"fontsize": 11})
+        axes[1].set_title("Train Split Ratio", fontsize=13)
+
+    plt.tight_layout()
+    save_path = out / f"data_distribution_frac{fraction}.png"
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f"  [Viz] Saved: {save_path}")
+
+
+# ============================================================================
+# 7. Radar Chart (Spider Plot)
+# ============================================================================
+def visualize_radar_chart(ssl_dir: str, baseline_dir: str, fraction: int,
+                          output_dir: str) -> None:
+    """Create a radar chart comparing SSL vs Baseline across all metrics."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    ssl_m = _extract_best_metrics(ssl_dir)
+    base_m = _extract_best_metrics(baseline_dir)
+
+    if not ssl_m or not base_m:
+        print("  [Skip] Metrics not available for radar chart")
+        return
+
+    categories = ["mAP@50:95", "mAP@50", "F1", "Precision", "Recall"]
+    keys = ["mAP_50_95", "mAP_50", "F1", "precision", "recall"]
+
+    ssl_vals = [ssl_m.get(k, 0) for k in keys]
+    base_vals = [base_m.get(k, 0) for k in keys]
+
+    angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False).tolist()
+    ssl_vals_plot = ssl_vals + [ssl_vals[0]]
+    base_vals_plot = base_vals + [base_vals[0]]
+    angles += [angles[0]]
+
+    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+    ax.plot(angles, ssl_vals_plot, "o-", linewidth=2, color=SSL_COLOR, label="SSL")
+    ax.fill(angles, ssl_vals_plot, alpha=0.15, color=SSL_COLOR)
+    ax.plot(angles, base_vals_plot, "o-", linewidth=2, color=BASELINE_COLOR, label="Baseline")
+    ax.fill(angles, base_vals_plot, alpha=0.15, color=BASELINE_COLOR)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(categories, fontsize=11)
+    ax.set_title(f"Performance Radar — {fraction}% Data", fontsize=15,
+                 fontweight="bold", pad=20)
+    ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1), fontsize=11)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    save_path = out / f"radar_frac{fraction}.png"
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f"  [Viz] Saved: {save_path}")
+
+
+# ============================================================================
+# 8. Improvement Delta Chart
+# ============================================================================
+def visualize_improvement(ssl_dir: str, baseline_dir: str, fraction: int,
+                          output_dir: str) -> None:
+    """Horizontal bar chart showing SSL improvement over Baseline per metric."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    ssl_m = _extract_best_metrics(ssl_dir)
+    base_m = _extract_best_metrics(baseline_dir)
+
+    if not ssl_m or not base_m:
+        print("  [Skip] Metrics not available for improvement chart")
+        return
+
+    names = ["mAP@50:95", "mAP@50", "F1", "Precision", "Recall"]
+    keys = ["mAP_50_95", "mAP_50", "F1", "precision", "recall"]
+
+    deltas = []
+    pcts = []
+    for k in keys:
+        s = ssl_m.get(k, 0)
+        b = base_m.get(k, 0)
+        deltas.append(s - b)
+        pcts.append(((s - b) / b * 100) if b > 0 else 0)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    colors = ["#4CAF50" if d >= 0 else "#F44336" for d in deltas]
+    bars = ax.barh(names, pcts, color=colors, alpha=0.85, edgecolor="white")
+
+    ax.axvline(x=0, color="gray", linewidth=0.8, linestyle="--")
+    ax.set_xlabel("Improvement (%)", fontsize=12)
+    ax.set_title(f"SSL Improvement over Baseline — {fraction}% Data",
+                 fontsize=15, fontweight="bold")
+    ax.grid(axis="x", alpha=0.2)
+
+    for bar, pct, delta in zip(bars, pcts, deltas):
+        sign = "+" if pct >= 0 else ""
+        ax.text(bar.get_width() + (0.3 if pct >= 0 else -0.3),
+                bar.get_y() + bar.get_height()/2,
+                f"{sign}{pct:.1f}% ({sign}{delta:.4f})",
+                va="center", fontsize=10, fontweight="bold",
+                ha="left" if pct >= 0 else "right")
+
+    plt.tight_layout()
+    save_path = out / f"improvement_frac{fraction}.png"
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f"  [Viz] Saved: {save_path}")
+
+
+# ============================================================================
+# 9. Cross-Fraction Tracker (aggregates results from all fractions)
+# ============================================================================
+def visualize_cross_fraction(output_dir: str) -> None:
+    """If multiple fraction results exist, create a cross-fraction comparison."""
+    base = Path(output_dir).parent  # e.g. /kaggle/working/visualizations
+    fractions = []
+    ssl_maps = []
+    base_maps = []
+
+    for frac_dir in sorted(base.glob("frac*")):
+        json_path = list(frac_dir.glob("metrics_frac*.json"))
+        if not json_path:
+            continue
+        with open(json_path[0]) as f:
+            data = json.load(f)
+        frac = data.get("fraction", 0)
+        ssl = data.get("ssl", {})
+        bl = data.get("baseline", {})
+        if ssl and bl:
+            fractions.append(frac)
+            ssl_maps.append(ssl.get("mAP_50", 0))
+            base_maps.append(bl.get("mAP_50", 0))
+
+    if len(fractions) < 2:
+        print("  [Skip] Need ≥2 fractions for cross-fraction chart")
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(fractions, ssl_maps, "o-", color=SSL_COLOR, linewidth=2.5,
+            markersize=10, label="SSL (Domain-Adapted)")
+    ax.plot(fractions, base_maps, "s--", color=BASELINE_COLOR, linewidth=2.5,
+            markersize=10, label="Baseline (Original)")
+
+    for x, s, b in zip(fractions, ssl_maps, base_maps):
+        ax.annotate(f"{s:.3f}", (x, s), textcoords="offset points",
+                    xytext=(0, 12), ha="center", fontsize=10, color=SSL_COLOR,
+                    fontweight="bold")
+        ax.annotate(f"{b:.3f}", (x, b), textcoords="offset points",
+                    xytext=(0, -18), ha="center", fontsize=10, color=BASELINE_COLOR,
+                    fontweight="bold")
+
+    ax.set_xlabel("Data Fraction (%)", fontsize=13)
+    ax.set_ylabel("mAP@50", fontsize=13)
+    ax.set_title("Data Efficiency: SSL vs Baseline across Fractions",
+                 fontsize=15, fontweight="bold")
+    ax.legend(fontsize=12)
+    ax.set_xticks(fractions)
+    ax.grid(alpha=0.2)
+
+    plt.tight_layout()
+    save_path = base / "cross_fraction_comparison.png"
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close()
+    print(f"  [Viz] Saved: {save_path}")
+
+
+# ============================================================================
 # Main
 # ============================================================================
 def main():
@@ -509,38 +727,49 @@ def main():
     parser.add_argument("--ssl-dir", type=str, required=True)
     parser.add_argument("--baseline-dir", type=str, required=True)
     parser.add_argument("--output-dir", type=str, default="/kaggle/working/visualizations")
-    parser.add_argument("--fraction", type=int, required=True, help="Data fraction percentage (10, 25, 50, 100)")
+    parser.add_argument("--fraction", type=int, required=True,
+                        help="Data fraction percentage (10, 25, 50, 100)")
     args = parser.parse_args()
 
+    total_steps = 9
     print("=" * 70)
     print(f"  Thesis Visualization Suite — Fraction {args.fraction}%")
     print("=" * 70)
 
-    # 1. Dataset samples
-    print("\n[1/5] Dataset Sample Visualization...")
+    print(f"\n[1/{total_steps}] Dataset Sample Visualization...")
     visualize_dataset_samples(args.dataset_dir, args.output_dir)
 
-    # 2. Detection results (SSL)
-    print("\n[2/5] Detection Visualization (SSL)...")
+    print(f"\n[2/{total_steps}] Data Distribution Chart...")
+    visualize_data_distribution(args.dataset_dir, args.fraction, args.output_dir)
+
+    print(f"\n[3/{total_steps}] Detection Visualization (SSL)...")
     visualize_detections(args.dataset_dir, args.ssl_dir,
                          "SSL Domain-Adapted", args.output_dir)
 
-    # 3. Detection results (Baseline)
-    print("\n[3/5] Detection Visualization (Baseline)...")
+    print(f"\n[4/{total_steps}] Detection Visualization (Baseline)...")
     visualize_detections(args.dataset_dir, args.baseline_dir,
                          "Baseline Original", args.output_dir)
 
-    # 4. Comparison chart
-    print("\n[4/5] Comparison Chart...")
+    print(f"\n[5/{total_steps}] Comparison Bar Chart...")
     visualize_comparison(args.ssl_dir, args.baseline_dir,
                          args.fraction, args.output_dir)
 
-    # 5. Training curves
-    print("\n[5/5] Training Curves...")
+    print(f"\n[6/{total_steps}] Radar Chart...")
+    visualize_radar_chart(args.ssl_dir, args.baseline_dir,
+                          args.fraction, args.output_dir)
+
+    print(f"\n[7/{total_steps}] Improvement Delta Chart...")
+    visualize_improvement(args.ssl_dir, args.baseline_dir,
+                          args.fraction, args.output_dir)
+
+    print(f"\n[8/{total_steps}] Training Curves...")
     visualize_training_curves(args.ssl_dir, args.baseline_dir,
                               args.fraction, args.output_dir)
 
-    # Summary
+    print(f"\n[9/{total_steps}] Cross-Fraction Tracker...")
+    visualize_cross_fraction(args.output_dir)
+
+    # Summary table (always last)
     print_summary_table(args.ssl_dir, args.baseline_dir,
                         args.fraction, args.output_dir)
 
