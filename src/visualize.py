@@ -738,7 +738,17 @@ def main():
                         help="Data fraction percentage (10, 25, 50, 100)")
     args = parser.parse_args()
 
-    total_steps = 9
+    # Verify dataset path exists
+    ds = Path(args.dataset_dir)
+    if not ds.exists():
+        print(f"  [WARN] dataset_dir {ds} not found, checking alternatives...")
+        for alt in [ds.parent / "dataset_coco", ds.parent / f"dataset_coco_frac{args.fraction}"]:
+            if alt.exists():
+                print(f"  [INFO] Found dataset at {alt}")
+                args.dataset_dir = str(alt)
+                break
+
+    total_steps = 7
     print("=" * 70)
     print(f"  Thesis Visualization Suite — Fraction {args.fraction}%")
     print("=" * 70)
@@ -761,19 +771,11 @@ def main():
     visualize_comparison(args.ssl_dir, args.baseline_dir,
                          args.fraction, args.output_dir)
 
-    print(f"\n[6/{total_steps}] Radar Chart...")
-    visualize_radar_chart(args.ssl_dir, args.baseline_dir,
-                          args.fraction, args.output_dir)
-
-    print(f"\n[7/{total_steps}] Improvement Delta Chart...")
-    visualize_improvement(args.ssl_dir, args.baseline_dir,
-                          args.fraction, args.output_dir)
-
-    print(f"\n[8/{total_steps}] Training Curves...")
+    print(f"\n[6/{total_steps}] Training Curves...")
     visualize_training_curves(args.ssl_dir, args.baseline_dir,
                               args.fraction, args.output_dir)
 
-    print(f"\n[9/{total_steps}] Cross-Fraction Tracker...")
+    print(f"\n[7/{total_steps}] Cross-Fraction Tracker...")
     visualize_cross_fraction(args.output_dir)
 
     # Summary table (always last)
@@ -785,3 +787,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
