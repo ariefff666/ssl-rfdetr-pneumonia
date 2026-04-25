@@ -166,8 +166,20 @@ def visualize_detections(dataset_dir: str, model_dir: str, model_name: str,
         import torch
         from rfdetr import RFDETRSmall
 
-        model = RFDETRSmall(pretrain_weights=str(ckpt))
-        print(f"  [Viz] Loaded model from: {ckpt}")
+        load_path = str(ckpt)
+
+        # Lightning .ckpt files need conversion to .pth
+        if str(ckpt).endswith(".ckpt"):
+            raw = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+            if "state_dict" in raw:
+                # Extract model weights and save as temp .pth
+                tmp_pth = Path(model_dir) / "_temp_weights.pth"
+                torch.save(raw["state_dict"], tmp_pth)
+                load_path = str(tmp_pth)
+                print(f"  [Viz] Converted .ckpt → .pth from: {ckpt.name}")
+
+        model = RFDETRSmall(pretrain_weights=load_path, num_classes=1)
+        print(f"  [Viz] Loaded model from: {ckpt.name}")
     except Exception as e:
         print(f"  [Skip] Could not load model: {e}")
         return
