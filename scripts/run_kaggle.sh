@@ -41,8 +41,17 @@ rm -rf /root/.cache/torch/hub/
 python3 -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')"
 
 # --- GPU Detection ---
-NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
-echo "Detected ${NUM_GPUS} GPU(s), Fraction=${FRAC_PCT}%"
+TOTAL_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
+
+# Untuk dataset kecil (≤25%), single GPU LEBIH CEPAT daripada DDP
+# karena overhead sinkronisasi gradient > keuntungan paralelisasi
+if [ "$FRAC_PCT" -le 25 ]; then
+    NUM_GPUS=1
+    echo "Detected ${TOTAL_GPUS} GPU(s), tapi menggunakan 1 GPU (fraction kecil, DDP overhead > benefit)"
+else
+    NUM_GPUS=${TOTAL_GPUS}
+    echo "Detected ${TOTAL_GPUS} GPU(s), menggunakan ${NUM_GPUS} GPU (fraction besar)"
+fi
 
 # ==============================================================================
 # INPUT PATHS — Sesuaikan path ini dengan dataset Kaggle kamu
