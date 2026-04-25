@@ -266,6 +266,125 @@ def visualize_detections(dataset_dir: str, model_dir: str, model_name: str,
     plt.close()
     print(f"  [Viz] Saved: {save_path}")
 
+# ============================================================================
+# 2b. Side-by-Side Detection Comparison (SSL vs Baseline on same images)
+# ============================================================================
+def visualize_side_by_side(dataset_dir: str, ssl_dir: str, baseline_dir: str,
+                           output_dir: str) -> None:
+    """Show SSL vs Baseline predictions on the same images side-by-side."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import torch
+        from rfdetr import RFDETRSmall
+    except ImportError:
+        print("  [Skip] rfdetr not installed")
+        return
+
+    def _load_model(model_dir):
+        for name in ["checkpoint_best_ema.pth", "checkpoint_best_regular.pth",
+                      "checkpoint_best_total.pth", "last.ckpt"]:
+            p = Path(model_dir) / name
+            if not p.exists():
+                continue
+            load_path = str(p)
+            if name.endswith(".ckpt"):
+                raw = torch.load(str(p), map_location="cpu", weights_only=False)
+                if "state_dict" in raw:
+                    sd = {}
+                    for k, v in raw["state_dict"].items():
+                        new_k = k.replace("model.", "", 1) if k.startswith("model.") else k
+                        sd[new_k] = v
+                    tmp = Path(model_dir) / "_temp_sbs.pth"
+                    torch.save({"model": sd}, tmp)
+                    load_path = str(tmp)
+            return RFDETRSmall(pretrain_weights=load_path, num_classes=1)
+        return None
+
+    ssl_model = _load_model(ssl_dir)
+    base_model = _load_model(baseline_dir)
+    if not ssl_model or not base_model:
+        print("  [Skip] Could not load both models for side-by-side")
+        return
+
+    # Load val annotations
+    ann_path = Path(dataset_dir) / "valid" / "_annotations.coco.json"
+    if not ann_path.exists():
+        print("  [Skip] Validation annotations not found")
+        return
+
+    with open(ann_path) as f:
+        coco = json.load(f)
+
+    img_anns = {}
+    for ann in coco["annotations"]:
+        img_anns.setdefault(ann["image_id"], []).append(ann)
+
+    samples = [img for img in coco["images"] if img["id"] in img_anns][:4]
+    if not samples:
+        return
+
+    fig, axes = plt.subplots(len(samples), 3, figsize=(18, 5 * len(samples)))
+    fig.suptitle("Detection Comparison: GT vs SSL vs Baseline", fontsize=18,
+                 fontweight="bold", y=1.01)
+
+    col_titles = ["Ground Truth", "SSL (Domain-Adapted)", "Baseline (Original)"]
+    for col, title in enumerate(col_titles):
+        axes[0][col].set_title(title, fontsize=14, fontweight="bold",
+                               color=[GT_COLOR, SSL_COLOR, BASELINE_COLOR][col])
+
+    for row, img_info in enumerate(samples):
+        img_path = Path(dataset_dir) / "valid" / img_info["file_name"]
+        if not img_path.exists():
+            continue
+        img = Image.open(img_path).convert("RGB")
+
+        for col in range(3):
+            axes[row][col].imshow(img, cmap="gray")
+            axes[row][col].axis("off")
+
+        # GT boxes
+        for ann in img_anns.get(img_info["id"], []):
+            x, y, w, h = ann["bbox"]
+            rect = patches.Rectangle((x, y), w, h, linewidth=2,
+                                     edgecolor=GT_COLOR, facecolor="none", linestyle="--")
+            axes[row][0].add_patch(rect)
+
+        # SSL predictions
+        try:
+            det = ssl_model.predict(img, threshold=0.3)
+            if hasattr(det, 'xyxy') and len(det.xyxy) > 0:
+                for box, conf in zip(det.xyxy, det.confidence):
+                    x1, y1, x2, y2 = box
+                    rect = patches.Rectangle((x1, y1), x2-x1, y2-y1,
+                                             linewidth=2, edgecolor=SSL_COLOR, facecolor="none")
+                    axes[row][1].add_patch(rect)
+                    axes[row][1].text(x1, y1-5, f"{conf:.2f}", fontsize=8, color=SSL_COLOR,
+                                     fontweight="bold", bbox=dict(facecolor="black", alpha=0.7))
+        except Exception:
+            pass
+
+        # Baseline predictions
+        try:
+            det = base_model.predict(img, threshold=0.3)
+            if hasattr(det, 'xyxy') and len(det.xyxy) > 0:
+                for box, conf in zip(det.xyxy, det.confidence):
+                    x1, y1, x2, y2 = box
+                    rect = patches.Rectangle((x1, y1), x2-x1, y2-y1,
+                                             linewidth=2, edgecolor=BASELINE_COLOR, facecolor="none")
+                    axes[row][2].add_patch(rect)
+                    axes[row][2].text(x1, y1-5, f"{conf:.2f}", fontsize=8, color=BASELINE_COLOR,
+                                     fontweight="bold", bbox=dict(facecolor="black", alpha=0.7))
+        except Exception:
+            pass
+
+    plt.tight_layout()
+    save_path = out / "side_by_side_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  [Viz] Saved: {save_path}")
+
 
 # ============================================================================
 # 3. Metrics Comparison Bar Chart (SSL vs Baseline)
@@ -765,7 +884,7 @@ def main():
                 args.dataset_dir = str(alt)
                 break
 
-    total_steps = 7
+    total_steps = 8
     print("=" * 70)
     print(f"  Thesis Visualization Suite — Fraction {args.fraction}%")
     print("=" * 70)
@@ -784,15 +903,19 @@ def main():
     visualize_detections(args.dataset_dir, args.baseline_dir,
                          "Baseline Original", args.output_dir)
 
-    print(f"\n[5/{total_steps}] Comparison Bar Chart...")
+    print(f"\n[5/{total_steps}] Side-by-Side Detection Comparison...")
+    visualize_side_by_side(args.dataset_dir, args.ssl_dir,
+                           args.baseline_dir, args.output_dir)
+
+    print(f"\n[6/{total_steps}] Comparison Bar Chart...")
     visualize_comparison(args.ssl_dir, args.baseline_dir,
                          args.fraction, args.output_dir)
 
-    print(f"\n[6/{total_steps}] Training Curves...")
+    print(f"\n[7/{total_steps}] Training Curves...")
     visualize_training_curves(args.ssl_dir, args.baseline_dir,
                               args.fraction, args.output_dir)
 
-    print(f"\n[7/{total_steps}] Cross-Fraction Tracker...")
+    print(f"\n[8/{total_steps}] Cross-Fraction Tracker...")
     visualize_cross_fraction(args.output_dir)
 
     # Summary table (always last)
