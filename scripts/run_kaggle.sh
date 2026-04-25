@@ -227,6 +227,21 @@ echo "============================================================"
 
 VIZ_DIR="/kaggle/working/visualizations/frac${FRAC_PCT}"
 
+# Copy previous fraction metrics from repo (for cross-fraction tracker)
+# These are committed JSON files from earlier runs
+REPO_VIZ_DIR="/kaggle/working/ssl-rfdetr-pneumonia/visualizations"
+if [ -d "${REPO_VIZ_DIR}" ]; then
+    for prev_frac_dir in ${REPO_VIZ_DIR}/frac*/; do
+        prev_frac_name=$(basename "${prev_frac_dir}")
+        target="/kaggle/working/visualizations/${prev_frac_name}"
+        if [ "${prev_frac_name}" != "frac${FRAC_PCT}" ] && [ ! -d "${target}" ]; then
+            mkdir -p "${target}"
+            cp -n "${prev_frac_dir}"metrics_frac*.json "${target}/" 2>/dev/null && \
+                echo "  Copied ${prev_frac_name} metrics for cross-fraction comparison"
+        fi
+    done
+fi
+
 python3 src/visualize.py \
     --dataset-dir "${DATASET_DIR}" \
     --ssl-dir "${SSL_DIR}" \
