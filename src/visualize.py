@@ -172,9 +172,13 @@ def visualize_detections(dataset_dir: str, model_dir: str, model_name: str,
         if str(ckpt).endswith(".ckpt"):
             raw = torch.load(str(ckpt), map_location="cpu", weights_only=False)
             if "state_dict" in raw:
-                # Extract model weights and save as temp .pth
+                # Strip Lightning 'model.' prefix from keys
+                sd = {}
+                for k, v in raw["state_dict"].items():
+                    new_k = k.replace("model.", "", 1) if k.startswith("model.") else k
+                    sd[new_k] = v
                 tmp_pth = Path(model_dir) / "_temp_weights.pth"
-                torch.save(raw["state_dict"], tmp_pth)
+                torch.save(sd, tmp_pth)
                 load_path = str(tmp_pth)
                 print(f"  [Viz] Converted .ckpt → .pth from: {ckpt.name}")
 
