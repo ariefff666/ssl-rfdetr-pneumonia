@@ -115,7 +115,7 @@ def load_model(checkpoint_path):
             for k, v in raw["state_dict"].items():
                 new_k = k.replace("model.", "", 1) if k.startswith("model.") else k
                 sd[new_k] = v
-            tmp_path = str(Path(checkpoint_path).parent / "_rsna_eval_temp.pth")
+            tmp_path = "/tmp/_rsna_eval_temp.pth"
             torch.save({"model": sd}, tmp_path)
             ckpt_path = tmp_path
 
