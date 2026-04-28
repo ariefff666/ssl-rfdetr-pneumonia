@@ -142,44 +142,40 @@ echo "PHASE 2A: RF-DETR Fine-tune — SSL backbone (${FRAC_PCT}%)"
 echo "============================================================"
 
 # Cek resume checkpoint untuk SSL
-# if [ -f "${SSL_RESUME_CKPT}" ]; then
-#     echo "=> RESUME: last.ckpt ditemukan di ${SSL_RESUME_CKPT}"
-#     echo "=> Melanjutkan training SSL dari checkpoint..."
+if [ -f "${SSL_RESUME_CKPT}" ]; then
+    echo "=> RESUME: last.ckpt ditemukan di ${SSL_RESUME_CKPT}"
+    echo "=> Melanjutkan training SSL dari checkpoint..."
 
-#     if [ "${NUM_GPUS}" -gt 1 ]; then
-#         torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
-#             src/train_rfdetr.py \
-#             --config "${TEMP_CONFIG}" \
-#             --ssl-backbone "${FINAL_BACKBONE}" \
-#             --run-name "${SSL_RUN_NAME}" \
-#             --resume "${SSL_RESUME_CKPT}"
-#     else
-#         python3 src/train_rfdetr.py \
-#             --config "${TEMP_CONFIG}" \
-#             --ssl-backbone "${FINAL_BACKBONE}" \
-#             --run-name "${SSL_RUN_NAME}" \
-#             --resume "${SSL_RESUME_CKPT}"
-#     fi
-# else
-#     echo "=> Checkpoint SSL tidak ditemukan. Training dari AWAL dengan SSL backbone."
+    if [ "${NUM_GPUS}" -gt 1 ]; then
+        torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
+            src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --ssl-backbone "${FINAL_BACKBONE}" \
+            --run-name "${SSL_RUN_NAME}" \
+            --resume "${SSL_RESUME_CKPT}"
+    else
+        python3 src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --ssl-backbone "${FINAL_BACKBONE}" \
+            --run-name "${SSL_RUN_NAME}" \
+            --resume "${SSL_RESUME_CKPT}"
+    fi
+else
+    echo "=> Checkpoint SSL tidak ditemukan. Training dari AWAL dengan SSL backbone."
 
-#     if [ "${NUM_GPUS}" -gt 1 ]; then
-#         torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
-#             src/train_rfdetr.py \
-#             --config "${TEMP_CONFIG}" \
-#             --ssl-backbone "${FINAL_BACKBONE}" \
-#             --run-name "${SSL_RUN_NAME}"
-#     else
-#         python3 src/train_rfdetr.py \
-#             --config "${TEMP_CONFIG}" \
-#             --ssl-backbone "${FINAL_BACKBONE}" \
-#             --run-name "${SSL_RUN_NAME}"
-#     fi
-# fi
-
-mkdir -p /kaggle/working/checkpoints/rfdetr/rfdetr-frac50-ssl
-cp /kaggle/input/datasets/arief666/rfdetr-frac50-ssl-ckpt/* \
-  /kaggle/working/checkpoints/rfdetr/rfdetr-frac50-ssl/
+    if [ "${NUM_GPUS}" -gt 1 ]; then
+        torchrun --nproc_per_node=${NUM_GPUS} --master_port=29500 \
+            src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --ssl-backbone "${FINAL_BACKBONE}" \
+            --run-name "${SSL_RUN_NAME}"
+    else
+        python3 src/train_rfdetr.py \
+            --config "${TEMP_CONFIG}" \
+            --ssl-backbone "${FINAL_BACKBONE}" \
+            --run-name "${SSL_RUN_NAME}"
+    fi
+fi
 
 # ==============================================================================
 # PHASE 2B: RF-DETR Fine-tune — Baseline
@@ -248,7 +244,7 @@ fi
 
 python3 src/visualize.py \
     --dataset-dir "${DATASET_DIR}" \
-    --ssl-dir /kaggle/working/checkpoints/rfdetr/rfdetr-frac50-ssl \
+    --ssl-dir "${SSL_DIR}" \
     --baseline-dir "${BASELINE_DIR}" \
     --output-dir "${VIZ_DIR}" \
     --fraction ${FRAC_PCT}
