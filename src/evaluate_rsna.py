@@ -125,9 +125,8 @@ def load_model(checkpoint_path):
 
 def evaluate_rsna(model, dataset_dir, split="valid", conf_threshold=0.01):
     """
-    Run RSNA evaluation on a dataset split.
-
-    Returns dict with per-threshold and overall scores.
+    Run RSNA evaluation with optimal threshold search.
+    Inference runs once at low threshold, then we sweep to find best score.
     """
     from PIL import Image
 
@@ -145,24 +144,25 @@ def evaluate_rsna(model, dataset_dir, split="valid", conf_threshold=0.01):
         x, y, w, h = ann["bbox"]
         gt_map.setdefault(ann["image_id"], []).append([x, y, x + w, y + h])
 
-    per_image_scores = []
-    per_threshold_scores = {t: [] for t in RSNA_IOU_THRESHOLDS}
     total = len(coco["images"])
+    print(f"  Running inference on {total} images (split='{split}')...")
 
-    print(f"  Evaluating {total} images on '{split}' split...")
+    # Step 1: Cache ALL predictions at low threshold
+    all_preds = {}  # image_id -> list of [x1, y1, x2, y2, conf]
+    all_gt = {}     # image_id -> list of [x1, y1, x2, y2]
 
     for idx, img_info in enumerate(coco["images"]):
-        if (idx + 1) % 200 == 0:
+        if (idx + 1) % 500 == 0:
             print(f"    [{idx+1}/{total}]")
+
+        img_id = img_info["id"]
+        all_gt[img_id] = gt_map.get(img_id, [])
 
         img_path = Path(dataset_dir) / split / img_info["file_name"]
         if not img_path.exists():
+            all_preds[img_id] = []
             continue
 
-        # Get GT boxes for this image
-        gt_boxes = gt_map.get(img_info["id"], [])
-
-        # Run inference
         try:
             img = Image.open(img_path).convert("RGB")
             detections = model.predict(img, threshold=conf_threshold)
@@ -173,32 +173,63 @@ def evaluate_rsna(model, dataset_dir, split="valid", conf_threshold=0.01):
                     x1, y1, x2, y2 = box.tolist() if hasattr(box, 'tolist') else box
                     c = conf.item() if hasattr(conf, 'item') else float(conf)
                     pred_boxes.append([x1, y1, x2, y2, c])
-        except Exception as e:
-            pred_boxes = []
+            all_preds[img_id] = pred_boxes
+        except Exception:
+            all_preds[img_id] = []
 
-        # Compute RSNA score for this image
-        img_score = rsna_score_single_image(pred_boxes, gt_boxes)
-        per_image_scores.append(img_score)
+    print(f"  Inference done. Searching optimal threshold...")
 
-        # Per-threshold breakdown
-        for t in RSNA_IOU_THRESHOLDS:
-            p = rsna_precision_at_iou(pred_boxes, gt_boxes, t)
-            per_threshold_scores[t].append(p)
+    # Step 2: Sweep confidence thresholds
+    thresholds_to_try = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6]
+    best_score = -1
+    best_threshold = 0.3
+    best_results = None
 
-    # Final RSNA score
-    final_score = float(np.mean(per_image_scores)) if per_image_scores else 0.0
+    for ct in thresholds_to_try:
+        per_image_scores = []
+        per_threshold_scores = {t: [] for t in RSNA_IOU_THRESHOLDS}
 
-    results = {
-        "rsna_score": final_score,
-        "num_images": len(per_image_scores),
-        "split": split,
-        "per_threshold": {
-            str(t): float(np.mean(per_threshold_scores[t]))
-            for t in RSNA_IOU_THRESHOLDS
-        },
+        for img_id in all_gt:
+            gt_boxes = all_gt[img_id]
+            # Filter predictions by current confidence threshold
+            pred_boxes = [p for p in all_preds.get(img_id, []) if p[4] >= ct]
+
+            img_score = rsna_score_single_image(pred_boxes, gt_boxes)
+            per_image_scores.append(img_score)
+
+            for t in RSNA_IOU_THRESHOLDS:
+                p = rsna_precision_at_iou(pred_boxes, gt_boxes, t)
+                per_threshold_scores[t].append(p)
+
+        score = float(np.mean(per_image_scores)) if per_image_scores else 0.0
+        print(f"    conf={ct:.2f} → RSNA={score:.4f}")
+
+        if score > best_score:
+            best_score = score
+            best_threshold = ct
+            best_results = {
+                "rsna_score": score,
+                "best_conf_threshold": ct,
+                "num_images": len(per_image_scores),
+                "split": split,
+                "per_threshold": {
+                    str(t): float(np.mean(per_threshold_scores[t]))
+                    for t in RSNA_IOU_THRESHOLDS
+                },
+            }
+
+    # Add threshold sweep summary
+    best_results["threshold_sweep"] = {
+        f"{ct:.2f}": float(np.mean([
+            rsna_score_single_image(
+                [p for p in all_preds.get(img_id, []) if p[4] >= ct],
+                all_gt[img_id]
+            ) for img_id in all_gt
+        ])) for ct in thresholds_to_try
     }
 
-    return results
+    print(f"\n  ✅ Best: conf={best_threshold:.2f} → RSNA Score={best_score:.4f}")
+    return best_results
 
 
 def print_results(results, model_name="Model"):
@@ -207,11 +238,18 @@ def print_results(results, model_name="Model"):
     print(f"  RSNA Evaluation — {model_name}")
     print(f"{'='*60}")
     print(f"  Split: {results['split']} ({results['num_images']} images)")
+    print(f"  Best Conf Threshold: {results.get('best_conf_threshold', 'N/A')}")
     print(f"  RSNA Score (mAP@[.4:.75]): {results['rsna_score']:.4f}")
     print(f"  {'─'*40}")
-    print(f"  Per-threshold breakdown:")
+    print(f"  Per IoU-threshold breakdown:")
     for t_str, score in results["per_threshold"].items():
         print(f"    IoU {float(t_str):.2f}: {score:.4f}")
+    if "threshold_sweep" in results:
+        print(f"  {'─'*40}")
+        print(f"  Confidence threshold sweep:")
+        for ct_str, score in results["threshold_sweep"].items():
+            marker = " ◀ BEST" if abs(score - results['rsna_score']) < 1e-6 else ""
+            print(f"    conf {ct_str}: {score:.4f}{marker}")
     print(f"{'='*60}\n")
 
 
