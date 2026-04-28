@@ -218,11 +218,56 @@ else
 fi
 
 # ==============================================================================
-# PHASE 3: Visualization & Comparison
+# PHASE 3: RSNA Official Evaluation
 # ==============================================================================
 echo ""
 echo "============================================================"
-echo "PHASE 3: Generating Visualizations (${FRAC_PCT}%)"
+echo "PHASE 3: RSNA Evaluation (${FRAC_PCT}%)"
+echo "============================================================"
+
+EVAL_DIR="/kaggle/working/evaluations/frac${FRAC_PCT}"
+mkdir -p "${EVAL_DIR}"
+
+# Find best checkpoint for each model
+find_best_ckpt() {
+    local dir="$1"
+    for name in checkpoint_best_total.pth checkpoint_best_ema.pth checkpoint_best_regular.pth last.ckpt; do
+        if [ -f "${dir}/${name}" ]; then
+            echo "${dir}/${name}"
+            return
+        fi
+    done
+}
+
+SSL_BEST=$(find_best_ckpt "${SSL_DIR}")
+BASELINE_BEST=$(find_best_ckpt "${BASELINE_DIR}")
+
+if [ -n "${SSL_BEST}" ]; then
+    echo "=> Evaluating SSL: ${SSL_BEST}"
+    python3 src/evaluate_rsna.py \
+        --checkpoint "${SSL_BEST}" \
+        --dataset-dir "${DATASET_DIR}" \
+        --split valid \
+        --model-name "SSL_frac${FRAC_PCT}" \
+        --output "${EVAL_DIR}/rsna_ssl.json"
+fi
+
+if [ -n "${BASELINE_BEST}" ]; then
+    echo "=> Evaluating Baseline: ${BASELINE_BEST}"
+    python3 src/evaluate_rsna.py \
+        --checkpoint "${BASELINE_BEST}" \
+        --dataset-dir "${DATASET_DIR}" \
+        --split valid \
+        --model-name "Baseline_frac${FRAC_PCT}" \
+        --output "${EVAL_DIR}/rsna_baseline.json"
+fi
+
+# ==============================================================================
+# PHASE 4: Visualization & Comparison
+# ==============================================================================
+echo ""
+echo "============================================================"
+echo "PHASE 4: Generating Visualizations (${FRAC_PCT}%)"
 echo "============================================================"
 
 VIZ_DIR="/kaggle/working/visualizations/frac${FRAC_PCT}"
@@ -254,5 +299,7 @@ echo "============================================================"
 echo "DONE: Fraction ${FRAC_PCT}% — $(date)"
 echo "  SSL checkpoints:       ${SSL_DIR}"
 echo "  Baseline checkpoints:  ${BASELINE_DIR}"
+echo "  RSNA evaluation:       ${EVAL_DIR}"
 echo "  Visualizations:        ${VIZ_DIR}"
 echo "============================================================"
+
