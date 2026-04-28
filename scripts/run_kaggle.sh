@@ -63,8 +63,8 @@ BACKBONE_INPUT_PATH="/kaggle/input/datasets/arief666/rfdetr-final-backbonep16/ba
 # Resume checkpoints (dari Kaggle input datasets)
 # Upload last.ckpt ke dataset terpisah di Kaggle, lalu isi path di sini.
 # Jika tidak ada / belum di-upload, biarkan path ini — script akan auto-detect.
-SSL_RESUME_CKPT="/kaggle/input/datasets/arief666/rfdetr-checkpoint-ssl-frac50/last(ssl_frac50).ckpt"
-BASELINE_RESUME_CKPT="/kaggle/input/datasets/arief666/rfdetr-checkpoint-baseline-frac50/last(baseline_frac50).ckpt"
+SSL_RESUME_CKPT="/kaggle/input/datasets/arief666/rfdetr-checkpoint-ssl-frac100/last(ssl_frac100).ckpt"
+BASELINE_RESUME_CKPT="/kaggle/input/datasets/arief666/rfdetr-checkpoint-baseline-frac100/last(baseline_frac100).ckpt"
 
 # ==============================================================================
 # Verifikasi backbone

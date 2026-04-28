@@ -33,6 +33,7 @@ logs/
 outputs/
 checkpoints/
 wandb/
+docs/
 *.pth
 *.pt
 *.onnx
@@ -46,3 +47,4 @@ extracted_*.png
 extract.py
 analyze_csv.py
 screencapture-*.pdf
+panduan_skripsi.md
